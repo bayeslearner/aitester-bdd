@@ -1,25 +1,47 @@
 """Walker — evaluates a Verification's rule DAG against a live browser.
 
-Plan-then-Execute Phase B:
-1. For each scenario, topo-sort rules by parent declarations.
-2. For each rule (parents first), walk items in order:
-   - StateCheck before any Action in this rule -> guard:
-       evaluate once with no wait; fail = skip the rule.
-   - StateCheck after an Action -> observation/assertion:
-       wait with timeout; fail = fail the rule.
-   - Action -> execute via BrowserAdapter.
-3. On any failure, capture screenshot, record evidence, abort the rule (and
-   transitively skip its descendants).
-4. Emit a Verdict at the end.
+Ported from the WISE RPA BDD engine. The WISE engine has been exercised
+across many real sites; the gotcha-fixes ported here are not theoretical.
+Do not strip them without measuring the regression.
 
-One concept: StateCheck. Position determines wait behavior and failure scope.
+Plan-then-Execute Phase B:
+
+  1. Topo-sort rules by parent declarations.
+  2. For each rule:
+     a. Split items at the first Action: pre-Action StateChecks are **guards**
+        (no wait, fail = skip rule with optional retry-redo); from the first
+        Action onward is the **body** (Actions interleaved with inline
+        StateChecks; post-Action StateChecks are observations/assertions —
+        wait with timeout, fail = fail the rule).
+     b. Run guards. If a guard fails and `rule.retry_max > 0`, replay the
+        body and re-check guards up to that many times (ported from WISE;
+        the same flow on real sites handles transient AJAX / late content).
+     c. Dismiss interrupts (popups, banners) before every action.
+        Per-rule scoping: `interrupt_paused` suppresses, `interrupt_override`
+        replaces the verification's global list.
+     d. If an action raises: dismiss interrupts and retry the action ONCE.
+        Real sites pop modals between the dismiss and the action.
+     e. Refresh `current_url` after actions — clicks may have navigated.
+     f. on_enter/on_fail screenshot hooks.
+     g. Per-rule `timeout_ms` deadline; global run timeout.
+
+Testing-specific (NOT in WISE, which is a scraper):
+
+  * Post-action StateCheck failure FAILS the rule with structured evidence
+    (RuleResult). WISE only warns ("Observation gate failed") — fine for
+    scraping, wrong for testing.
+  * Verdict aggregates RuleResults across the run with screenshots,
+    expected/observed values, and the offending step repr.
+
+One concept for "did the page reach the expected state?": StateCheck.
+Position determines wait behavior and failure scope.
 """
 from __future__ import annotations
 
 import logging
 import re
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from aitester_bdd.engine.browser import BrowserAdapter
 from aitester_bdd.engine.verdict import RuleResult, Verdict
@@ -31,14 +53,16 @@ log = logging.getLogger("aitester_bdd.engine.walk")
 
 DEFAULT_OBSERVATION_TIMEOUT_MS = 5000
 DEFAULT_GUARD_TIMEOUT_MS = 200
+DEFAULT_RUN_TIMEOUT_S = 300  # global cap — override via AITESTER_RUN_TIMEOUT env
 
+
+# ---------------------------------------------------------------------------
+# Topo sort — Kahn's algorithm, stable (ported from WISE _resolve_node_order)
+# ---------------------------------------------------------------------------
 
 def _topo_sort(rules_by_name: dict[str, "Rule"]) -> list[str]:
-    """Return rule names in dependency order (parents before children).
-
-    Cycles raise ValueError; unknown parents are placed at their cite position
-    and flagged at walk time.
-    """
+    """Parents-before-children ordering. Unknown parents are placed at their
+    cite position and flagged at walk time. Cycles raise ValueError."""
     sorted_names: list[str] = []
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -64,19 +88,26 @@ def _topo_sort(rules_by_name: dict[str, "Rule"]) -> list[str]:
     return sorted_names
 
 
+# ---------------------------------------------------------------------------
+# StateCheck dispatch — testing-specific (covers all kinds the LLM authors).
+# Guards call this with a short timeout; observations call with a long one.
+# ---------------------------------------------------------------------------
+
 def _eval_state_check(
-    browser, sc: "StateCheck", *, timeout_ms: int
+    browser: BrowserAdapter, sc: "StateCheck", *, timeout_ms: int
 ) -> tuple[bool, str, str]:
     """Evaluate one StateCheck. Returns (passed, expected_repr, observed_repr).
 
-    The single dispatch covers every kind the keyword library can emit —
-    URL checks, element existence/counts, text/state/class/attribute,
-    form values, network, and semantic.
+    Selector-bearing kinds resolve the locator through `resolve_fallback_selector`
+    first (ported from WISE) so `"a | b"` pipe-fallback works everywhere.
     """
     kind = sc.kind
     css = sc.locator
     expected = sc.expected
     extra = sc.extra
+
+    # Resolve pipe-fallback selector once for selector-bearing kinds.
+    css_resolved = browser.resolve_fallback_selector(css) if css else css
 
     # ── URL ────────────────────────────────────────────────────────────
     if kind == "url_contains":
@@ -98,78 +129,78 @@ def _eval_state_check(
 
     # ── Element existence ─────────────────────────────────────────────
     if kind == "selector_exists":
-        ok = browser.wait_for_selector(css, present=True, timeout_ms=timeout_ms)
+        ok = browser.wait_for_elements_state(css_resolved, "attached", timeout_ms=timeout_ms)
         return (ok, f"selector {css!r} exists", "present" if ok else "absent")
     if kind == "selector_missing":
-        ok = browser.wait_for_selector(css, present=False, timeout_ms=timeout_ms)
+        ok = browser.wait_for_elements_state(css_resolved, "detached", timeout_ms=timeout_ms)
         return (ok, f"selector {css!r} does not exist", "absent" if ok else "present")
 
     # ── Counts ─────────────────────────────────────────────────────────
     if kind == "count_eq":
-        obs = browser.get_count(css)
+        obs = browser.get_count(css_resolved)
         return (obs == int(expected), f"count == {expected}", str(obs))
     if kind == "count_at_least":
-        obs = browser.get_count(css)
+        obs = browser.get_count(css_resolved)
         return (obs >= int(expected), f"count >= {expected}", str(obs))
     if kind == "count_at_most":
-        obs = browser.get_count(css)
+        obs = browser.get_count(css_resolved)
         return (obs <= int(expected), f"count <= {expected}", str(obs))
 
     # ── Element text ──────────────────────────────────────────────────
     if kind == "has_text":
-        obs = browser.get_text(css).strip()
+        obs = browser.get_text(css_resolved).strip()
         return (obs == expected, expected, obs)
     if kind == "contains":
-        obs = browser.get_text(css)
+        obs = browser.get_text(css_resolved)
         return (expected in obs, f"contains {expected!r}", obs)
     if kind == "matches":
-        obs = browser.get_text(css)
+        obs = browser.get_text(css_resolved)
         return (bool(re.search(expected, obs)), f"matches {expected!r}", obs)
     if kind == "not_contains":
-        obs = browser.get_text(css)
+        obs = browser.get_text(css_resolved)
         return (expected not in obs, f"not contains {expected!r}", obs)
 
     # ── Element state ──────────────────────────────────────────────────
     if kind == "visible":
-        ok = browser.is_visible(css)
+        ok = browser.is_visible(css_resolved)
         return (ok, "visible", "visible" if ok else "hidden")
     if kind == "hidden":
-        ok = not browser.is_visible(css)
+        ok = not browser.is_visible(css_resolved)
         return (ok, "hidden", "hidden" if ok else "visible")
     if kind == "enabled":
-        ok = browser.is_enabled(css)
+        ok = browser.is_enabled(css_resolved)
         return (ok, "enabled", "enabled" if ok else "disabled")
     if kind == "disabled":
-        ok = not browser.is_enabled(css)
+        ok = not browser.is_enabled(css_resolved)
         return (ok, "disabled", "disabled" if ok else "enabled")
     if kind == "checked":
-        ok = browser.is_checked(css)
+        ok = browser.is_checked(css_resolved)
         return (ok, "checked", "checked" if ok else "unchecked")
 
     # ── Class / attribute ─────────────────────────────────────────────
     if kind == "has_class":
-        cls = browser.get_class(css)
+        cls = browser.get_class(css_resolved)
         ok = expected in cls.split()
         return (ok, f"has class {expected!r}", cls)
     if kind == "not_class":
-        cls = browser.get_class(css)
+        cls = browser.get_class(css_resolved)
         ok = expected not in cls.split()
         return (ok, f"does not have class {expected!r}", cls)
     if kind == "attr_eq":
         attr = extra.get("attr", "")
-        obs = browser.get_attribute(css, attr)
+        obs = browser.get_attribute(css_resolved, attr)
         return (obs == expected, f"{attr}={expected!r}", obs)
     if kind == "attr_contains":
         attr = extra.get("attr", "")
-        obs = browser.get_attribute(css, attr)
+        obs = browser.get_attribute(css_resolved, attr)
         return (expected in obs, f"{attr} contains {expected!r}", obs)
 
     # ── Form values ───────────────────────────────────────────────────
     if kind == "input_value":
-        obs = browser.get_value(css)
+        obs = browser.get_value(css_resolved)
         return (obs == expected, expected, obs)
     if kind == "select_selected":
-        obs = browser.get_value(css)
+        obs = browser.get_value(css_resolved)
         return (obs == expected, expected, obs)
 
     # ── Network ────────────────────────────────────────────────────────
@@ -184,7 +215,7 @@ def _eval_state_check(
     if kind == "api_returns":
         return _eval_api_returns(extra.get("path", ""), extra.get("field", ""), expected)
 
-    # ── Semantic (AI-judged) — stub; full impl needs LLM client
+    # ── Semantic (AI-judged) — stub
     if kind == "semantic":
         return (True, "semantic (stub)", "passed without judging")
 
@@ -210,43 +241,50 @@ def _eval_api_returns(path: str, field: str, expected: str) -> tuple[bool, str, 
         return (False, expected, f"error: {exc}")
 
 
-def _eval_action(browser, action: "Action") -> None:
-    """Execute one action against the live browser."""
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+
+def _eval_action(browser: BrowserAdapter, action: "Action") -> None:
+    """Execute one action against the live browser.
+
+    Selector-bearing actions resolve the target through fallback resolution
+    (`"a | b"` pipe syntax) before dispatching.
+    """
     kind = action.kind
+    target = browser.resolve_fallback_selector(action.target) if action.target else action.target
+
     if kind == "open":
-        browser.open(action.target)
+        browser.open(target or action.target)
+        browser.wait_for_load_state("domcontentloaded", timeout="10s")
     elif kind == "reload":
         browser.reload()
     elif kind == "back":
         browser.go_back()
     elif kind == "click":
-        browser.click(action.target)
-        _maybe_await(browser, action.options)
+        browser.click(target)
     elif kind == "click_text":
         browser.click_text(action.target)
-        _maybe_await(browser, action.options)
     elif kind == "dblclick":
-        browser.double_click(action.target)
+        browser.double_click(target)
     elif kind == "type":
-        browser.type(action.target, action.value, secret=False)
-        _maybe_await(browser, action.options)
+        browser.type(target, action.value, secret=False)
     elif kind == "type_secret":
-        browser.type(action.target, action.value, secret=True)
-        _maybe_await(browser, action.options)
+        browser.type(target, action.value, secret=True)
     elif kind == "select":
-        browser.select(action.target, action.value)
+        browser.select(target, action.value)
     elif kind == "check":
-        browser.check(action.target)
+        browser.check(target)
     elif kind == "uncheck":
-        browser.uncheck(action.target)
+        browser.uncheck(target)
     elif kind == "hover":
-        browser.hover(action.target)
+        browser.hover(target)
     elif kind == "focus":
-        browser.focus(action.target)
+        browser.focus(target)
     elif kind == "press":
-        browser.press(action.target, action.options.get("keys", []))
+        browser.press(target, action.options.get("keys", []))
     elif kind == "upload":
-        browser.upload(action.target, action.value)
+        browser.upload(target, action.value)
     elif kind == "scroll":
         browser.scroll()
     elif kind == "wait_idle":
@@ -254,7 +292,10 @@ def _eval_action(browser, action: "Action") -> None:
     elif kind == "screenshot":
         browser.screenshot(action.options.get("filename"))
     elif kind == "js":
+        # Returns "__NAVIGATED__" if JS triggered page change (handled, not raised).
         browser.evaluate_js(action.value)
+    elif kind == "set_stepper":
+        browser.set_stepper(target, int(action.value or "0"))
     elif kind == "browser_step":
         log.warning("browser_step passthrough not yet supported: %s", action.target)
     elif kind == "call_keyword":
@@ -263,90 +304,329 @@ def _eval_action(browser, action: "Action") -> None:
         log.warning("unknown action %s", kind)
 
 
-def _maybe_await(browser, options: dict) -> None:
-    """Honor inline `await=<selector>` option after click/type."""
-    sel = options.get("await")
-    if sel:
-        browser.wait_for_selector(sel, present=True, timeout_ms=DEFAULT_OBSERVATION_TIMEOUT_MS)
+def _await_after_action(browser: BrowserAdapter, action: "Action") -> None:
+    """Honor inline `await=<selector>` option after click/type.
 
+    Ported from WISE. After an action, if `await=` is declared, wait for
+    that selector before advancing. This is the MDP synchronization gate
+    (s,a → o, where 'await' is the expected observation 'o').
+    """
+    sel = action.options.get("await")
+    if sel:
+        resolved = browser.resolve_fallback_selector(sel)
+        browser.wait_for_elements_state(resolved, "attached", timeout_ms=DEFAULT_OBSERVATION_TIMEOUT_MS)
+
+
+# ---------------------------------------------------------------------------
+# Interrupt handling — ported from WISE
+# ---------------------------------------------------------------------------
+
+def _effective_interrupt_selectors(
+    rule: "Rule", verification: "Verification"
+) -> list[str]:
+    """Resolve which dismiss-selectors apply to this rule.
+
+    Per-rule scoping (ported from WISE):
+      - rule.interrupt_paused: empty list (suppress all dismissals)
+      - rule.interrupt_override is not None: use that list
+      - otherwise: inherit verification.interrupts.dismiss_selectors
+    """
+    if rule.interrupt_paused:
+        return []
+    if rule.interrupt_override is not None:
+        return rule.interrupt_override
+    return verification.interrupts.dismiss_selectors
+
+
+def _dismiss_interrupts(browser: BrowserAdapter, selectors: list[str]) -> None:
+    """Click any visible interrupt selectors (cookie banners, modals).
+
+    Ported from WISE. Called before guards and before every action.
+    Each selector is tried once per call — if a modal pops up mid-action,
+    the action handler's retry path will call this again.
+    """
+    for sel in selectors:
+        try:
+            if browser.get_count(sel) > 0:
+                browser.click(sel)
+                log.info("Dismissed interrupt: %s", sel)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Rule body split — items list → (guards, body)
+# ---------------------------------------------------------------------------
+
+def _split_rule_items(rule: "Rule") -> tuple[list["StateCheck"], list]:
+    """Split the rule's items into (guards, body).
+
+    Guards = StateChecks before the first Action.
+    Body   = everything from the first Action onward (Actions + inline
+             StateChecks that act as observation gates / assertions).
+    """
+    from aitester_bdd.AITester import Action, StateCheck
+
+    guards: list[StateCheck] = []
+    body: list = []
+    saw_action = False
+    for it in rule.items:
+        if saw_action:
+            body.append(it)
+            continue
+        if isinstance(it, Action):
+            saw_action = True
+            body.append(it)
+        elif isinstance(it, StateCheck):
+            guards.append(it)
+        else:
+            log.warning("unknown item in rule %r: %r", rule.name, it)
+    return guards, body
+
+
+# ---------------------------------------------------------------------------
+# Guards — pre-action StateChecks with retry-redo
+# ---------------------------------------------------------------------------
+
+def _check_guards(
+    browser: BrowserAdapter,
+    rule: "Rule",
+    verification: "Verification",
+    guards: list["StateCheck"],
+) -> tuple[bool, Optional["StateCheck"], str, str]:
+    """Evaluate all guards. Returns (passed, failed_check_or_None, expected, observed).
+
+    Dismisses interrupts once before checking. Each guard uses the short
+    guard timeout (no significant waiting — guards are 'is the world already
+    in the right state?').
+    """
+    _dismiss_interrupts(browser, _effective_interrupt_selectors(rule, verification))
+    for g in guards:
+        ok, expected, observed = _eval_state_check(browser, g, timeout_ms=DEFAULT_GUARD_TIMEOUT_MS)
+        if not ok:
+            return (False, g, expected, observed)
+    return (True, None, "", "")
+
+
+# ---------------------------------------------------------------------------
+# Body — actions + inline observation gates + post-action assertions
+# ---------------------------------------------------------------------------
+
+def _execute_body(
+    browser: BrowserAdapter,
+    rule: "Rule",
+    verification: "Verification",
+    body: list,
+    *,
+    deadline: Optional[float] = None,
+) -> tuple[bool, str, str, Optional["StateCheck | Action"], str, str]:
+    """Execute the rule body — actions interleaved with inline state checks.
+
+    Returns (passed, failure_step_kind, failure_message, failed_item,
+             expected, observed).
+
+    Post-action StateChecks are observations/assertions: failing them
+    FAILS the rule with structured evidence (testing-specific; WISE only
+    warned).
+
+    Actions: dismiss interrupts → run action → on raise, dismiss + retry
+    once. Honors `await=<selector>` option after each action.
+    """
+    from aitester_bdd.AITester import Action, StateCheck
+
+    interrupt_sels = _effective_interrupt_selectors(rule, verification)
+
+    for step in body:
+        if deadline is not None and time.time() > deadline:
+            return (False, "rule_timeout",
+                    f"per-rule timeout exceeded ({rule.options.get('timeout_ms')}ms)",
+                    step, "", "")
+
+        if isinstance(step, StateCheck):
+            # Inline observation gate / post-action assertion.
+            ok, expected, observed = _eval_state_check(
+                browser, step, timeout_ms=DEFAULT_OBSERVATION_TIMEOUT_MS
+            )
+            if not ok:
+                return (
+                    False, "observation_or_assertion",
+                    f"post-action state check failed: {step.kind}",
+                    step, expected, observed,
+                )
+            continue
+
+        if not isinstance(step, Action):
+            continue
+
+        # Dismiss interrupts before every action — modals can appear at
+        # any moment and block clicks. (Ported from WISE.)
+        if interrupt_sels:
+            _dismiss_interrupts(browser, interrupt_sels)
+
+        try:
+            _eval_action(browser, step)
+            _await_after_action(browser, step)
+        except Exception as exc_first:
+            # Recovery: a popup may have appeared between the dismiss
+            # and the action. Dismiss + retry once. (Ported from WISE.)
+            if interrupt_sels:
+                _dismiss_interrupts(browser, interrupt_sels)
+                try:
+                    _eval_action(browser, step)
+                    _await_after_action(browser, step)
+                    continue
+                except Exception as exc_retry:
+                    return (False, "action",
+                            f"action raised twice: {type(exc_retry).__name__}: {exc_retry}",
+                            step, "", "")
+            return (False, "action",
+                    f"action raised: {type(exc_first).__name__}: {exc_first}",
+                    step, "", "")
+
+    return (True, "", "", None, "", "")
+
+
+# ---------------------------------------------------------------------------
+# Per-rule walk
+# ---------------------------------------------------------------------------
 
 def _walk_rule(
-    browser, scenario: "Scenario", rule: "Rule", *, already_passed: set[str]
+    browser: BrowserAdapter,
+    scenario: "Scenario",
+    rule: "Rule",
+    verification: "Verification",
+    *,
+    already_passed: set[str],
+    run_deadline: Optional[float] = None,
 ) -> RuleResult:
-    """Walk one rule's items in order. Returns its RuleResult."""
-    from aitester_bdd.AITester import Action, StateCheck  # local to avoid circular import
+    """Walk one rule with full WISE semantics ported."""
+    from aitester_bdd.AITester import Action, StateCheck
 
     start = time.time()
 
+    # Global run timeout
+    if run_deadline is not None and time.time() > run_deadline:
+        return RuleResult(
+            rule_name=rule.name, scenario_name=scenario.name, passed=False,
+            failure_step_kind="run_timeout",
+            failure_message="global run timeout exceeded",
+            duration_ms=(time.time() - start) * 1000,
+        )
+
+    # Parent gating
     for p in rule.parents:
         if p not in already_passed:
             return RuleResult(
-                rule_name=rule.name,
-                scenario_name=scenario.name,
-                passed=False,
+                rule_name=rule.name, scenario_name=scenario.name, passed=False,
                 failure_step_kind="parent_failed",
                 failure_message=f"parent rule {p!r} did not pass",
                 duration_ms=(time.time() - start) * 1000,
             )
 
-    saw_action = False
-    for it in rule.items:
-        if isinstance(it, StateCheck):
-            # Position determines treatment:
-            #   pre-action  -> guard (no wait, fail = skip rule)
-            #   post-action -> observation/assertion (wait, fail = fail rule)
-            timeout = DEFAULT_OBSERVATION_TIMEOUT_MS if saw_action else DEFAULT_GUARD_TIMEOUT_MS
-            ok, expected, observed = _eval_state_check(browser, it, timeout_ms=timeout)
-            if not ok:
-                step_kind = "observation_or_assertion" if saw_action else "guard"
-                shot = (
-                    browser.screenshot(f"fail_{scenario.name}_{rule.name}_{step_kind}.png")
-                    if saw_action
-                    else None
-                )
-                msg = (
-                    "post-action check failed (observation/assertion)"
-                    if saw_action
-                    else "pre-action guard failed; rule skipped"
-                )
-                return RuleResult(
-                    rule_name=rule.name,
-                    scenario_name=scenario.name,
-                    passed=False,
-                    failure_step_kind=step_kind,
-                    failure_step_repr=f"{it.kind} {it.locator or it.expected}",
-                    failure_message=msg,
-                    expected=expected,
-                    observed=observed,
-                    screenshot=shot,
-                    duration_ms=(time.time() - start) * 1000,
-                )
-        elif isinstance(it, Action):
-            saw_action = True
+    # on_enter hook
+    if rule.options.get("on_enter") == "screenshot":
+        try:
+            browser.screenshot(f"on_enter_{rule.name}.png")
+        except Exception:
+            pass
+
+    guards, body = _split_rule_items(rule)
+
+    # Per-rule deadline (if declared via rule.options.timeout_ms)
+    rule_timeout_ms = rule.options.get("timeout_ms")
+    rule_deadline = (
+        time.time() + (int(rule_timeout_ms) / 1000.0)
+        if rule_timeout_ms else None
+    )
+
+    # ── Guards (with retry-redo, ported from WISE) ────────────────────
+    ok, failed_guard, expected, observed = _check_guards(
+        browser, rule, verification, guards
+    )
+    if not ok and rule.retry_max > 0:
+        for attempt in range(1, rule.retry_max + 1):
+            log.info("Retry %d/%d for rule %r (guard %r failed)",
+                     attempt, rule.retry_max, rule.name,
+                     failed_guard.kind if failed_guard else "?")
+            time.sleep(rule.retry_delay_ms / 1000.0)
+            # Replay the body before re-checking guards (WISE semantics —
+            # actions may bring the world into the guarded state).
+            _execute_body(browser, rule, verification, body, deadline=rule_deadline)
+            ok, failed_guard, expected, observed = _check_guards(
+                browser, rule, verification, guards
+            )
+            if ok:
+                break
+
+    if not ok:
+        if rule.options.get("on_fail") == "screenshot":
             try:
-                _eval_action(browser, it)
-            except Exception as exc:
-                return RuleResult(
-                    rule_name=rule.name,
-                    scenario_name=scenario.name,
-                    passed=False,
-                    failure_step_kind="action",
-                    failure_step_repr=f"{it.kind} {it.target}",
-                    failure_message=f"action raised: {type(exc).__name__}: {exc}",
-                    screenshot=browser.screenshot(f"fail_{scenario.name}_{rule.name}_action.png"),
-                    duration_ms=(time.time() - start) * 1000,
-                )
+                browser.screenshot(f"on_fail_{rule.name}_guard.png")
+            except Exception:
+                pass
+        if rule.guard_policy == "abort":
+            raise RuntimeError(f"Guard failed (abort policy) for rule {rule.name!r}")
+        return RuleResult(
+            rule_name=rule.name, scenario_name=scenario.name, passed=False,
+            failure_step_kind="guard",
+            failure_step_repr=(
+                f"{failed_guard.kind} {failed_guard.locator or failed_guard.expected}"
+                if failed_guard else ""
+            ),
+            failure_message="pre-action guard failed; rule skipped",
+            expected=expected, observed=observed,
+            duration_ms=(time.time() - start) * 1000,
+        )
+
+    # ── Body (actions + inline observations/assertions) ───────────────
+    passed, fk, fmsg, fitem, fexp, fobs = _execute_body(
+        browser, rule, verification, body, deadline=rule_deadline
+    )
+
+    if not passed:
+        shot = None
+        if rule.options.get("on_fail") == "screenshot" or fk in ("action", "observation_or_assertion"):
+            try:
+                shot = browser.screenshot(f"fail_{scenario.name}_{rule.name}_{fk}.png")
+            except Exception:
+                pass
+        repr_str = ""
+        if isinstance(fitem, StateCheck):
+            repr_str = f"{fitem.kind} {fitem.locator or fitem.expected}"
+        elif isinstance(fitem, Action):
+            repr_str = f"{fitem.kind} {fitem.target}"
+        return RuleResult(
+            rule_name=rule.name, scenario_name=scenario.name, passed=False,
+            failure_step_kind=fk,
+            failure_step_repr=repr_str,
+            failure_message=fmsg,
+            expected=fexp, observed=fobs,
+            screenshot=shot,
+            duration_ms=(time.time() - start) * 1000,
+        )
 
     return RuleResult(
-        rule_name=rule.name,
-        scenario_name=scenario.name,
-        passed=True,
+        rule_name=rule.name, scenario_name=scenario.name, passed=True,
         duration_ms=(time.time() - start) * 1000,
     )
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 def walk_verification(verification: "Verification") -> Verdict:
-    """Walk all scenarios in a Verification; return a Verdict."""
+    """Walk all scenarios in a Verification; return a Verdict.
+
+    Global run timeout via AITESTER_RUN_TIMEOUT (seconds, default 300).
+    Browser session is opened once and torn down at the end (assumes one
+    .robot suite per process).
+    """
+    import os
+
+    run_timeout_s = int(os.environ.get("AITESTER_RUN_TIMEOUT", str(DEFAULT_RUN_TIMEOUT_S)))
+    run_deadline = time.time() + run_timeout_s if run_timeout_s else None
+
     verdict = Verdict(verification_name=verification.name)
     browser = BrowserAdapter()
     browser.new_session(headless=True)
@@ -354,6 +634,10 @@ def walk_verification(verification: "Verification") -> Verdict:
         for sc in verification.scenarios:
             if sc.entry_url:
                 browser.open(sc.entry_url)
+                browser.wait_for_load_state("domcontentloaded", timeout="10s")
+                # Dismiss interrupts after initial load too
+                _dismiss_interrupts(browser, verification.interrupts.dismiss_selectors)
+
             order = _topo_sort(sc.rules)
             already_passed: set[str] = set()
             for rname in order:
@@ -361,15 +645,17 @@ def walk_verification(verification: "Verification") -> Verdict:
                 if rule is None:
                     verdict.results.append(
                         RuleResult(
-                            rule_name=rname,
-                            scenario_name=sc.name,
-                            passed=False,
+                            rule_name=rname, scenario_name=sc.name, passed=False,
                             failure_step_kind="parent_unknown",
                             failure_message=f"undefined parent rule {rname!r}",
                         )
                     )
                     continue
-                result = _walk_rule(browser, sc, rule, already_passed=already_passed)
+                result = _walk_rule(
+                    browser, sc, rule, verification,
+                    already_passed=already_passed,
+                    run_deadline=run_deadline,
+                )
                 verdict.results.append(result)
                 if result.passed:
                     already_passed.add(rname)

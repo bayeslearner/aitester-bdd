@@ -71,6 +71,30 @@ class FakeBrowser:
         return None
     def last_response_body(self) -> str:
         return ""
+    # WISE-ported surface
+    def wait_for_load_state(self, state="domcontentloaded", *, timeout="10s") -> None: ...
+    def wait_for_elements_state(self, selector, state="attached", *, timeout_ms=5000) -> bool:
+        present = self.selector_present.get(selector, False)
+        if state in ("attached", "visible"):
+            return present
+        return not present
+    def resolve_fallback_selector(self, raw: str) -> str:
+        """Honor the pipe-fallback in tests: pick the first candidate that
+        the FakeBrowser actually has live (count > 0 or present-True or
+        non-empty text), mirroring the real BrowserAdapter behavior."""
+        if " | " not in raw:
+            return raw
+        for c in (s.strip() for s in raw.split(" | ")):
+            if (
+                self.selector_present.get(c, False)
+                or self.count_for.get(c, 0) > 0
+                or self.text_for.get(c, "")
+            ):
+                return c
+        return raw.split(" | ")[0].strip()
+    def set_stepper(self, selector: str, count: int) -> None:
+        for _ in range(count):
+            self.actions_called.append(("set_stepper", selector))
 
 
 def _build(verification_name="v"):

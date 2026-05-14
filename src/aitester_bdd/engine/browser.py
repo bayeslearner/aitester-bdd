@@ -1,22 +1,49 @@
-"""Browser adapter — thin wrapper over robotframework-browser.
+"""Browser adapter — minimal surface the walker drives.
 
-Exposes the minimal surface the walker needs:
-- navigate, click, type, fill, select, check, hover, focus, press, upload
-- get_url, get_text, get_attribute, get_count, get_value
-- wait_for_selector, wait_for_idle
-- screenshot, evaluate_js, reload, go_back
+Backs onto `robotframework-browser` (Playwright via RF) when running inside
+Robot Framework. Falls back to a NullBrowser stub when RF-Browser is
+unimportable (unit tests).
 
-If `robotframework-browser` isn't importable (unit test environment),
-fall back to a no-op stub so the walker's plan-traversal logic can still
-be tested.
+Gotcha-fixes ported from the WISE RPA BDD engine (battle-tested across many
+real sites; do not strip without measuring regressions):
+
+  * `click_text` — Playwright `text="X"` (exact) → `text=X` (substring) →
+    JS MouseEvent fallback. Plain "Playwright text= only" misses elements
+    rendered as `div[role=button]` with whitespace-padded text content.
+  * `evaluate_js` — JS that navigates destroys the page context, raising
+    "Execution context was destroyed" / "Page navigated". Catch + classify
+    as expected navigation, wait for the new page, return success.
+  * `wait_for_elements_state` — delegates to RF-Browser's native waiter,
+    which uses Playwright's strict mode and is faster + more reliable than
+    a Python polling loop.
+  * `set_stepper` — clicking a button that re-renders itself triggers
+    Playwright "element is unstable" / "detached from DOM" errors. Use a
+    JS-click (skips Playwright's stability check) and re-wait between
+    repeated clicks.
+  * `resolve_fallback_selector` — `"a | b | c"` pipe-fallback: walker picks
+    the first candidate that resolves on the current page. Plain selectors
+    pass through unchanged.
+
+The walker also calls `_dismiss_interrupts` (in walk.py) before guards and
+before every action; that lives in the walker because it needs the
+verification's `interrupt_selectors` config, not the browser state.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
 
 log = logging.getLogger("aitester_bdd.engine.browser")
+
+
+# Navigation-related exception messages from Playwright/RF-Browser. These
+# are expected (not real errors) when a click/JS triggers a page change.
+_NAV_ERROR_HINTS = (
+    "navigation", "context", "destroyed", "detached",
+    "navigated", "execution context",
+)
 
 
 class _NullBrowser:
@@ -31,10 +58,11 @@ class _NullBrowser:
 
 
 class BrowserAdapter:
-    """Minimal browser-driving surface for the walker.
+    """Minimal browser-driving surface.
 
-    Wraps the robotframework-browser `Browser` library if available.
-    Falls back to a NullBrowser stub for unit testing.
+    Wraps the RF-Browser library if available (the RF-native path), falls
+    back to a NullBrowser stub for unit testing. All gotcha-fix logic lives
+    in this class so the walker can stay focused on rule semantics.
     """
 
     def __init__(self) -> None:
@@ -43,18 +71,40 @@ class BrowserAdapter:
         self._last_response_body: str = ""
 
     def _rf_browser(self) -> Any:
-        """Lazy-import robotframework-browser. Returns a NullBrowser if unavailable."""
+        """Lazy-acquire RF-Browser instance.
+
+        When running inside RF: returns the live `Browser` library
+        instance from RF's keyword store (so all our calls operate on the
+        same page the user's `.robot` file is driving).
+
+        When RF context not available: instantiates a fresh Browser()
+        (CLI / standalone runner path).
+
+        When RF-Browser not importable: returns _NullBrowser (unit tests).
+        """
         if self._rfb is None:
             try:
-                from Browser import Browser  # type: ignore[import-not-found]
-                self._rfb = Browser()
+                # Path A: inside RF — grab the live instance.
+                from robot.libraries.BuiltIn import BuiltIn
+                try:
+                    self._rfb = BuiltIn().get_library_instance("Browser")
+                except Exception:
+                    self._rfb = None
+                # Path B: not in RF context — fresh instance.
+                if self._rfb is None:
+                    from Browser import Browser  # type: ignore[import-not-found]
+                    self._rfb = Browser()
             except Exception as exc:
-                log.warning("robotframework-browser not available (%s) — using NullBrowser", exc)
+                log.warning(
+                    "robotframework-browser not available (%s) — using NullBrowser",
+                    exc,
+                )
                 self._rfb = _NullBrowser()
         return self._rfb
 
     # ------------------------------------------------------------------
-    # Lifecycle
+    # Lifecycle — usually managed by RF Suite Setup; safe no-ops if RF
+    # already opened the browser for us.
     # ------------------------------------------------------------------
 
     def new_session(self, *, headless: bool = True) -> None:
@@ -64,7 +114,8 @@ class BrowserAdapter:
             b.new_context()
             b.new_page()
         except Exception as exc:
-            log.warning("new_session failed: %s", exc)
+            # Likely: RF already opened a browser for us. That's fine.
+            log.debug("new_session no-op (%s)", exc)
 
     def close(self) -> None:
         try:
@@ -73,7 +124,7 @@ class BrowserAdapter:
             pass
 
     # ------------------------------------------------------------------
-    # Navigation
+    # Navigation + page-readiness
     # ------------------------------------------------------------------
 
     def open(self, url: str) -> None:
@@ -83,12 +134,6 @@ class BrowserAdapter:
         b = self._rf_browser()
         if hasattr(b, "reload"):
             b.reload()
-        else:
-            # rf-browser uses Reload via keyword
-            try:
-                b.get_url()  # fallback no-op
-            except Exception:
-                pass
 
     def go_back(self) -> None:
         b = self._rf_browser()
@@ -97,9 +142,55 @@ class BrowserAdapter:
 
     def url(self) -> str:
         try:
-            return self._rf_browser().get_url() or ""
+            return str(self._rf_browser().get_url() or "")
         except Exception:
             return ""
+
+    def wait_for_load_state(self, state: str = "domcontentloaded", *, timeout: str = "10s") -> None:
+        """Wait for page to reach a load state. Swallows timeouts — the
+        caller usually has a follow-up state check that surfaces real
+        failures with richer evidence."""
+        b = self._rf_browser()
+        if hasattr(b, "wait_for_load_state"):
+            try:
+                b.wait_for_load_state(state, timeout)
+            except Exception as exc:
+                log.debug("wait_for_load_state(%s) timeout/error: %s", state, exc)
+
+    # ------------------------------------------------------------------
+    # Selector waiting — delegates to RF-Browser's native Playwright waiter
+    # (much faster + more reliable than a Python polling loop).
+    # ------------------------------------------------------------------
+
+    def wait_for_elements_state(
+        self, selector: str, state: str = "attached", *, timeout_ms: int = 5000
+    ) -> bool:
+        b = self._rf_browser()
+        if hasattr(b, "wait_for_elements_state"):
+            try:
+                b.wait_for_elements_state(selector, state, f"{timeout_ms}ms")
+                return True
+            except Exception:
+                return False
+        # Fallback for NullBrowser/missing API: poll
+        end = time.time() + (timeout_ms / 1000.0)
+        while time.time() < end:
+            try:
+                count = self.get_count(selector)
+                want_present = state in ("attached", "visible")
+                if want_present and count > 0:
+                    return True
+                if (not want_present) and count == 0:
+                    return True
+            except Exception:
+                pass
+            time.sleep(0.05)
+        return False
+
+    # Backward-compat alias used by older walker code.
+    def wait_for_selector(self, selector: str, *, present: bool = True, timeout_ms: int = 5000) -> bool:
+        state = "attached" if present else "detached"
+        return self.wait_for_elements_state(selector, state, timeout_ms=timeout_ms)
 
     # ------------------------------------------------------------------
     # Interaction
@@ -109,7 +200,37 @@ class BrowserAdapter:
         self._rf_browser().click(selector)
 
     def click_text(self, text: str) -> None:
-        self._rf_browser().click(f"text={text}")
+        """Click an element by visible text.
+
+        Try Playwright's native text selector (exact then substring) first,
+        which dispatches a real mouse event. If neither matches, fall back
+        to JS that finds the first visible element containing the text
+        among button-like roles and dispatches a synthetic MouseEvent.
+
+        Ported from WISE: real sites mix native buttons, ARIA role buttons,
+        and tabindex-divs with padded whitespace. Playwright's text=
+        selector alone misses many of them.
+        """
+        b = self._rf_browser()
+        for sel in (f'text="{text}"', f"text={text}"):
+            try:
+                if self.get_count(sel) > 0:
+                    b.click(sel)
+                    return
+            except Exception:
+                pass
+        # JS fallback: dispatch synthetic MouseEvent on first visible match.
+        script = (
+            f"() => {{ const t = {json.dumps(text)}; "
+            f"for (const el of document.querySelectorAll("
+            f"'button, a, [role=button], div[tabindex]')) {{ "
+            f"if (el.offsetParent !== null && el.textContent.includes(t)) "
+            f"{{ el.dispatchEvent(new MouseEvent('click', {{bubbles:true}})); "
+            f"return true; }} }} return false; }}"
+        )
+        result = self.evaluate_js(script)
+        if not result:
+            log.warning("click_text: no element found for %r", text)
 
     def double_click(self, selector: str) -> None:
         b = self._rf_browser()
@@ -121,7 +242,6 @@ class BrowserAdapter:
 
     def type(self, selector: str, value: str, *, secret: bool = False) -> None:
         b = self._rf_browser()
-        # rf-browser uses Fill Text / Type Text
         if hasattr(b, "fill_text"):
             b.fill_text(selector, value, secret=secret)
         elif hasattr(b, "type_text"):
@@ -171,56 +291,76 @@ class BrowserAdapter:
             b.scroll_by(None, "0", "1000")
 
     def wait_for_idle(self) -> None:
-        b = self._rf_browser()
-        if hasattr(b, "wait_for_load_state"):
-            b.wait_for_load_state("networkidle")
+        self.wait_for_load_state("networkidle", timeout="5s")
 
     def screenshot(self, filename: str | None = None) -> str:
         b = self._rf_browser()
         if hasattr(b, "take_screenshot"):
-            return b.take_screenshot(filename or "screenshot.png") or ""
+            try:
+                return str(b.take_screenshot(filename or "screenshot.png") or "")
+            except Exception:
+                return ""
         return ""
 
+    # ------------------------------------------------------------------
+    # JS evaluation with navigation awareness
+    # ------------------------------------------------------------------
+
     def evaluate_js(self, script: str) -> Any:
+        """Evaluate JS in the page context.
+
+        If the script triggers navigation, Playwright destroys the page
+        context and raises ("Execution context was destroyed", "Page
+        navigated", "Element is detached"). Treat that as expected: wait
+        for the new page to load and return a navigation marker rather
+        than re-raising.
+
+        Ported from WISE: scrapers + form-submit tests routinely have JS
+        that issues `location.href = ...` or click handlers that navigate.
+        A bare raise here would fail the rule when it actually succeeded.
+        """
         b = self._rf_browser()
-        if hasattr(b, "evaluate_javascript"):
+        if not hasattr(b, "evaluate_javascript"):
+            return None
+        url_before = self.url()
+        try:
             return b.evaluate_javascript(None, script)
-        return None
+        except Exception as exc:
+            msg = str(exc).lower()
+            if any(h in msg for h in _NAV_ERROR_HINTS):
+                # Expected navigation: wait + report success
+                self.wait_for_load_state("domcontentloaded", timeout="5s")
+                url_after = self.url()
+                log.info(
+                    "evaluate_js: triggered navigation %s -> %s",
+                    url_before, url_after,
+                )
+                return "__NAVIGATED__"
+            raise
+
+    def set_stepper(self, selector: str, count: int) -> None:
+        """Click a self-re-rendering stepper N times via JS.
+
+        Stepper widgets (number-up arrows etc.) destroy and re-mount their
+        button after each click, which trips Playwright's stability check
+        ('element is unstable' / 'detached from DOM'). Use JS-click to
+        bypass the stability check, and wait for re-attach between clicks.
+
+        Ported from WISE: this exact failure mode happens on common date
+        and quantity pickers; the native click path simply does not work.
+        """
+        self.wait_for_elements_state(selector, "attached", timeout_ms=5000)
+        click_script = (
+            f"(() => {{ const el = document.querySelector({json.dumps(selector)}); "
+            f"if (el) {{ el.click(); return true; }} return false; }})()"
+        )
+        for _ in range(count):
+            self.evaluate_js(click_script)
+            self.wait_for_elements_state(selector, "attached", timeout_ms=2000)
 
     # ------------------------------------------------------------------
-    # Observation gates / assertions
+    # Queries
     # ------------------------------------------------------------------
-
-    def wait_for_selector(self, selector: str, *, present: bool = True, timeout_ms: int = 5000) -> bool:
-        """Wait for a selector to be (present|absent). Returns True if condition met."""
-        b = self._rf_browser()
-        end = time.time() + (timeout_ms / 1000.0)
-        while time.time() < end:
-            try:
-                count = self._element_count(selector)
-                if present and count > 0:
-                    return True
-                if (not present) and count == 0:
-                    return True
-            except Exception:
-                pass
-            time.sleep(0.1)
-        return False
-
-    def _element_count(self, selector: str) -> int:
-        b = self._rf_browser()
-        if hasattr(b, "get_element_count"):
-            try:
-                return int(b.get_element_count(selector) or 0)
-            except Exception:
-                return 0
-        return 0
-
-    def selector_exists(self, selector: str, *, timeout_ms: int = 2000) -> bool:
-        return self.wait_for_selector(selector, present=True, timeout_ms=timeout_ms)
-
-    def selector_missing(self, selector: str, *, timeout_ms: int = 2000) -> bool:
-        return self.wait_for_selector(selector, present=False, timeout_ms=timeout_ms)
 
     def get_text(self, selector: str) -> str:
         b = self._rf_browser()
@@ -253,7 +393,13 @@ class BrowserAdapter:
         return self.get_attribute(selector, "class")
 
     def get_count(self, selector: str) -> int:
-        return self._element_count(selector)
+        b = self._rf_browser()
+        if hasattr(b, "get_element_count"):
+            try:
+                return int(b.get_element_count(selector) or 0)
+            except Exception:
+                return 0
+        return 0
 
     def is_visible(self, selector: str) -> bool:
         b = self._rf_browser()
@@ -274,10 +420,43 @@ class BrowserAdapter:
         return True
 
     def is_checked(self, selector: str) -> bool:
+        b = self._rf_browser()
+        if hasattr(b, "get_element_state"):
+            try:
+                return bool(b.get_element_state(selector, "checked"))
+            except Exception:
+                return False
         return self.get_attribute(selector, "checked") in ("true", "checked", "")
 
     # ------------------------------------------------------------------
-    # Network / API
+    # Selector fallback resolution — ported from WISE.
+    # ------------------------------------------------------------------
+
+    def resolve_fallback_selector(self, raw: str) -> str:
+        """Resolve a pipe-fallback selector.
+
+        Syntax: `"primary | fallback1 | fallback2"`. The walker tries each
+        candidate on the live page and returns the first that matches.
+        Plain selectors (no ` | `) pass through unchanged.
+
+        Ported from WISE: real apps re-skin frequently; a test that
+        encodes both the old and the new selector survives one redesign
+        without re-authoring.
+        """
+        if " | " not in raw:
+            return raw
+        candidates = [c.strip() for c in raw.split(" | ")]
+        for idx, c in enumerate(candidates):
+            try:
+                if self.get_count(c) > 0:
+                    log.info("Fallback selector: using %r (option %d/%d)", c, idx + 1, len(candidates))
+                    return c
+            except Exception:
+                continue
+        return candidates[0]
+
+    # ------------------------------------------------------------------
+    # Network / API surface (filled by the walker's network hook)
     # ------------------------------------------------------------------
 
     def record_response(self, status: int, body: str) -> None:

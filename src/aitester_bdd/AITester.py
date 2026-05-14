@@ -77,11 +77,31 @@ class Action:
 
 @dataclass
 class Rule:
-    """A named block of guards, actions, observations/assertions."""
+    """A named block of guards, actions, observations/assertions.
+
+    Position-determined: items list mixes StateChecks and Actions in declaration
+    order. Walker splits internally — StateChecks BEFORE the first Action are
+    guards (no wait, fail = skip the rule with retry-redo); everything from
+    the first Action onward is the body (actions interleaved with inline
+    observation gates and post-action assertions; fail = fail the rule).
+
+    Per-rule policy fields mirror WISE (ported with battle-tested defaults):
+      - retry_max / retry_delay_ms: retry guards N times, replaying steps each retry
+      - interrupt_paused: skip auto-dismiss of overlays for this rule
+      - interrupt_override: replace the global dismiss-selectors for this rule
+      - guard_policy: 'skip' (default) or 'abort' (raise to stop the whole walk)
+      - options: 'timeout_ms', 'on_enter', 'on_fail' (the latter two: 'screenshot')
+    """
 
     name: str
     parents: list[str] = field(default_factory=list)
     items: list[Any] = field(default_factory=list)  # StateCheck | Action in declaration order
+    retry_max: int = 0
+    retry_delay_ms: int = 1000
+    interrupt_paused: bool = False
+    interrupt_override: Optional[list[str]] = None  # None = inherit verification's list
+    guard_policy: str = "skip"
+    options: dict[str, str] = field(default_factory=dict)
 
     @property
     def has_action(self) -> bool:
@@ -226,6 +246,47 @@ class AITester:
             p = p.strip()
             if p:
                 rule.parents.append(p)
+
+    # ------------------------------------------------------------------
+    # Per-rule policy (ported from WISE — retry, timeout, interrupt scope)
+    # ------------------------------------------------------------------
+
+    @keyword("And I set retry ${max} times with ${delay} ms delay")
+    def set_retry(self, max_: str, delay: str) -> None:
+        """If guards fail, replay body + re-check guards up to ${max} times."""
+        rule = self._current_rule()
+        rule.retry_max = int(max_)
+        rule.retry_delay_ms = int(delay)
+
+    @keyword("And I set guard policy \"${policy}\"")
+    def set_guard_policy(self, policy: str) -> None:
+        """'skip' (default — return failure) or 'abort' (raise to stop walk)."""
+        self._current_rule().guard_policy = _strip_quotes(policy)
+
+    @keyword("And I pause interrupts")
+    def pause_interrupts(self) -> None:
+        """Suppress dismiss-overlays for this rule (e.g., when testing the modal itself)."""
+        self._current_rule().interrupt_paused = True
+
+    @keyword("And I scope interrupts to \"${selectors}\"")
+    def scope_interrupts(self, selectors: str) -> None:
+        """Replace the verification-wide dismiss-selector list for this rule.
+        Pass a comma-separated list of selectors."""
+        sels = [s.strip() for s in _strip_quotes(selectors).split(",") if s.strip()]
+        self._current_rule().interrupt_override = sels
+
+    @keyword("And I set rule timeout ${ms} ms")
+    def set_rule_timeout(self, ms: str) -> None:
+        """Per-rule deadline; rule fails if body exceeds it."""
+        self._current_rule().options["timeout_ms"] = str(int(ms))
+
+    @keyword("And I screenshot on enter")
+    def screenshot_on_enter(self) -> None:
+        self._current_rule().options["on_enter"] = "screenshot"
+
+    @keyword("And I screenshot on fail")
+    def screenshot_on_fail(self) -> None:
+        self._current_rule().options["on_fail"] = "screenshot"
 
     # ------------------------------------------------------------------
     # State Checks — URL
