@@ -1,19 +1,30 @@
-"""LangChain tools for the authoring agent.
+"""LangChain tools for the authoring agent — Playwright explorer.
 
-Borrowed pattern from prismi3's aitester/browser.py — wraps the
-`agent-browser` CLI as StructuredTools so the deepagents ReAct loop can
-drive a live target.
+The agent drives a real Playwright browser to take CSS-grounded snapshots
+of the live target before writing the `.robot` suite. Selectors come out
+of real DOM attributes (`data-testid`, `placeholder`, `aria-label`,
+`id`, `name`, `class`, `role`), NOT inferred from common HTML
+conventions.
 
-The agent uses these to explore the site BEFORE writing the .robot
-suite (or bug report). No imagined selectors — every selector in the
-final suite must trace to a snapshot the agent took via these tools.
+Earlier iterations of this file used the `agent-browser` CLI to explore.
+That returns an accessibility tree with ephemeral `@e1`-style refs and
+no clean ref→CSS conversion path — the agent had to infer CSS selectors
+from common HTML knowledge, which produced silent failures
+(e.g. `input[autocomplete=username]` against a form that didn't use
+autocomplete). Playwright's sync API surfaces real attributes natively.
+
+Threading note: Playwright sync API is incompatible with `asyncio` loops.
+DeepAgents/LangGraph runs the agent in an asyncio loop, so all
+Playwright calls are bridged onto a dedicated daemon worker thread.
 """
 from __future__ import annotations
 
+import json
 import logging
-import subprocess
+import queue
+import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -29,12 +40,14 @@ class OpenParams(BaseModel):
 
 
 class CssParams(BaseModel):
-    css: str = Field(description="CSS selector (Playwright syntax — supports >>, text=, nth=).")
+    css: str = Field(
+        description="CSS selector (Playwright syntax — supports >>, text=, nth=).",
+    )
 
 
 class TypeParams(BaseModel):
     css: str = Field(description="CSS selector for the input element.")
-    text: str = Field(description="Text to type into the element.")
+    text: str = Field(description="Text to fill into the element (clears first).")
 
 
 class EvalParams(BaseModel):
@@ -48,8 +61,23 @@ class ScreenshotParams(BaseModel):
     )
 
 
+class GetHtmlParams(BaseModel):
+    css: str = Field(
+        description=(
+            "CSS selector. Returns outerHTML of the first matching element "
+            "— use to see every attribute the element actually has when "
+            "browser_snapshot's per-element summary isn't enough."
+        )
+    )
+
+
+class GetAttrParams(BaseModel):
+    css: str = Field(description="CSS selector.")
+    name: str = Field(description="Attribute name (e.g. 'data-testid', 'href').")
+
+
 class ReadFileParams(BaseModel):
-    path: str = Field(description="Absolute path inside the optional source_root.")
+    path: str = Field(description="Absolute path inside the configured source_root.")
 
 
 class WriteRobotSuiteParams(BaseModel):
@@ -62,92 +90,313 @@ class ReportBugParams(BaseModel):
     content: str = Field(description="The bug report markdown contents.")
 
 
-# ─── agent-browser CLI bridge ─────────────────────────────────────────
+# ─── Playwright worker thread ─────────────────────────────────────────
 
 
-def _run_ab(*args: str, timeout: int = 20) -> str:
-    """Run an `agent-browser` CLI command. Returns stdout (or "ERROR: ...")."""
-    cmd = ["agent-browser", *args]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        out = (r.stdout or "").strip()
-        err = (r.stderr or "").strip()
-        if r.returncode != 0:
-            return f"ERROR (exit {r.returncode}): {err or out}"
-        return out
-    except subprocess.TimeoutExpired:
-        return f"ERROR: agent-browser {' '.join(args)} timed out after {timeout}s"
-    except FileNotFoundError:
-        return "ERROR: agent-browser CLI not found on PATH"
+# JS executed inside the page during snapshot. Returns a structured
+# view: per interactive element, the actual DOM attributes the agent
+# needs to construct CSS selectors. The agent reads this output and
+# picks a selector from real attributes — never inferred.
+_SNAPSHOT_JS = """
+() => {
+  const ATTRS_OF_INTEREST = [
+    'data-testid', 'placeholder', 'aria-label', 'aria-labelledby',
+    'name', 'id', 'type', 'role', 'href', 'value',
+    'autocomplete', 'aria-describedby', 'title', 'alt'
+  ];
+  const SELECTORS = [
+    'input', 'textarea', 'select', 'button',
+    'a[href]',
+    '[role="button"]', '[role="link"]', '[role="textbox"]',
+    '[role="checkbox"]', '[role="radio"]', '[role="combobox"]',
+    '[role="tab"]', '[role="menuitem"]', '[role="option"]',
+    '[role="dialog"]', '[role="alert"]',
+    '[tabindex]:not([tabindex="-1"])',
+    'h1', 'h2', 'h3',
+    '[data-testid]'
+  ];
+  const seen = new Set();
+  const out = [];
+  for (const sel of SELECTORS) {
+    for (const el of document.querySelectorAll(sel)) {
+      if (seen.has(el)) continue;
+      seen.add(el);
+      // Skip hidden elements
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0 && !el.offsetParent) continue;
+      const cs = window.getComputedStyle(el);
+      if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+      const attrs = {};
+      for (const a of ATTRS_OF_INTEREST) {
+        const v = el.getAttribute(a);
+        if (v !== null && v !== '') attrs[a] = v;
+      }
+      const cls = (el.className && typeof el.className === 'string') ? el.className.trim() : '';
+      if (cls) attrs['class'] = cls;
+      const text = (el.innerText || el.value || '').toString().trim().slice(0, 120);
+      out.push({ tag: el.tagName.toLowerCase(), text, attrs });
+    }
+  }
+  return { url: window.location.href, title: document.title, elements: out };
+}
+"""
+
+
+def _format_snapshot(data: dict) -> str:
+    """Render the JS-evaluated snapshot into a CSS-rich agent-readable view."""
+    lines = [
+        f"URL: {data.get('url', '?')}",
+        f"Title: {data.get('title', '')!r}",
+        f"Interactive elements ({len(data.get('elements', []))}):",
+    ]
+    for el in data.get("elements", []):
+        tag = el.get("tag", "?")
+        attrs = el.get("attrs", {}) or {}
+        text = el.get("text", "") or ""
+        attr_parts = []
+        # Surface high-signal attrs first
+        for key in (
+            "data-testid", "id", "name", "type", "role", "aria-label",
+            "placeholder", "href", "autocomplete", "title", "value",
+        ):
+            if key in attrs:
+                v = attrs[key]
+                short = v if len(v) <= 80 else v[:77] + "..."
+                attr_parts.append(f'{key}={json.dumps(short)}')
+        # Then class (truncated)
+        if "class" in attrs:
+            cls = attrs["class"]
+            short = cls if len(cls) <= 60 else cls[:57] + "..."
+            attr_parts.append(f'class={json.dumps(short)}')
+        text_part = ""
+        if text:
+            t = text if len(text) <= 80 else text[:77] + "..."
+            text_part = f"  text={json.dumps(t)}"
+        lines.append(f"  <{tag}>  {' '.join(attr_parts)}{text_part}")
+    return "\n".join(lines)
+
+
+class _PlaywrightWorker:
+    """Single-threaded Playwright session.
+
+    Playwright sync API can't share a thread with an asyncio event loop.
+    DeepAgents runs the agent under asyncio, so we ferry every tool call
+    onto this worker thread and wait for the result.
+    """
+
+    def __init__(self, *, headless: bool = True) -> None:
+        self._headless = headless
+        self._inq: queue.Queue = queue.Queue()
+        self._ready = threading.Event()
+        self._init_error: Optional[BaseException] = None
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            self._init_error = exc
+            self._ready.set()
+            return
+        try:
+            self._pw = sync_playwright().start()
+            self._browser = self._pw.chromium.launch(headless=self._headless)
+            self._context = self._browser.new_context()
+            self._page = self._context.new_page()
+        except Exception as exc:
+            self._init_error = exc
+            self._ready.set()
+            return
+        self._ready.set()
+
+        while True:
+            fn, args, kwargs, result_q = self._inq.get()
+            if fn is None:
+                try:
+                    self._context.close()
+                except Exception:
+                    pass
+                try:
+                    self._browser.close()
+                except Exception:
+                    pass
+                try:
+                    self._pw.stop()
+                except Exception:
+                    pass
+                return
+            try:
+                value = fn(self._page, *args, **kwargs)
+                result_q.put(("ok", value))
+            except Exception as exc:
+                result_q.put(("err", exc))
+
+    def call(self, fn, *args, **kwargs):
+        self._ready.wait(timeout=60)
+        if self._init_error is not None:
+            raise RuntimeError(
+                f"Playwright explorer failed to start: "
+                f"{type(self._init_error).__name__}: {self._init_error}. "
+                f"Run `aitester init-browser` to install Playwright browsers."
+            ) from self._init_error
+        result_q: queue.Queue = queue.Queue()
+        self._inq.put((fn, args, kwargs, result_q))
+        kind, value = result_q.get()
+        if kind == "err":
+            raise value
+        return value
+
+    def shutdown(self) -> None:
+        self._inq.put((None, None, None, None))
+        self._thread.join(timeout=10)
+
+
+_worker: Optional[_PlaywrightWorker] = None
+
+
+def _w() -> _PlaywrightWorker:
+    global _worker
+    if _worker is None:
+        _worker = _PlaywrightWorker()
+    return _worker
+
+
+def _shutdown_worker() -> None:
+    global _worker
+    if _worker is not None:
+        try:
+            _worker.shutdown()
+        except Exception:
+            pass
+        _worker = None
 
 
 # ─── Tool implementations ─────────────────────────────────────────────
 
 
 def browser_open(url: str) -> str:
-    """Navigate the live browser to a URL. Persistent session between calls."""
-    return _run_ab("open", url)
+    """Navigate to a URL."""
+    def _do(page, u):
+        page.goto(u, wait_until="domcontentloaded")
+        return f"OK: navigated to {page.url}"
+    return _w().call(_do, url)
 
 
 def browser_snapshot() -> str:
-    """Take an accessibility-tree snapshot of the current page.
+    """Take a CSS-grounded structured snapshot of the page.
 
-    Returns a structured listing of every visible/interactive element
-    with CSS selectors, data-testid, aria-label, role, text, and
-    attribute summaries. Use this after every navigation / action that
-    changes the page — the snapshot is your source of truth for
-    selectors.
+    Returns URL + title + a list of interactive/landmark elements with
+    their REAL attributes (data-testid, placeholder, aria-label, id,
+    name, type, role, href, class). Use this as your source of truth
+    for selectors. Never invent attributes that aren't here.
     """
-    return _run_ab("snapshot", "-c", "-d", "3")
+    def _do(page):
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=10_000)
+        except Exception:
+            pass
+        data = page.evaluate(_SNAPSHOT_JS)
+        return _format_snapshot(data)
+    return _w().call(_do)
 
 
 def browser_click(css: str) -> str:
-    """Click an element by CSS selector."""
-    return _run_ab("click", css)
+    """Click the first element matching `css`."""
+    def _do(page, c):
+        page.locator(c).first.click(timeout=10_000)
+        return f"OK: clicked {c}"
+    return _w().call(_do, css)
 
 
 def browser_type(css: str, text: str) -> str:
-    """Fill an input element with text (clears existing value first)."""
-    return _run_ab("type", css, text)
+    """Fill an input element with text (clears first)."""
+    def _do(page, c, t):
+        page.locator(c).first.fill(t, timeout=10_000)
+        return f"OK: typed {len(t)} chars into {c}"
+    return _w().call(_do, css, text)
 
 
 def browser_get_text(css: str) -> str:
-    """Get the inner text of the first matching element."""
-    return _run_ab("get", "text", css)
+    """Get the inner text of the first element matching `css`."""
+    def _do(page, c):
+        try:
+            return page.locator(c).first.inner_text(timeout=5_000) or ""
+        except Exception as exc:
+            return f"ERROR: {exc}"
+    return _w().call(_do, css)
 
 
 def browser_get_count(css: str) -> str:
-    """Count how many elements match a selector. Returns the integer as text."""
-    return _run_ab("get", "count", css)
+    """Count how many elements match `css`. Returns the integer as text."""
+    def _do(page, c):
+        return str(page.locator(c).count())
+    return _w().call(_do, css)
+
+
+def browser_get_html(css: str) -> str:
+    """Return the outerHTML of the first element matching `css`.
+
+    Use when browser_snapshot's summary doesn't surface an attribute
+    you need (e.g. nested children, computed value, exact class list).
+    """
+    def _do(page, c):
+        try:
+            return page.locator(c).first.evaluate(
+                "el => el.outerHTML", timeout=5_000,
+            )
+        except Exception as exc:
+            return f"ERROR: {exc}"
+    return _w().call(_do, css)
+
+
+def browser_get_attr(css: str, name: str) -> str:
+    """Get a single attribute value from the first matching element."""
+    def _do(page, c, n):
+        try:
+            v = page.locator(c).first.get_attribute(n, timeout=5_000)
+            return "" if v is None else str(v)
+        except Exception as exc:
+            return f"ERROR: {exc}"
+    return _w().call(_do, css, name)
 
 
 def browser_eval(js: str) -> str:
-    """Run a JS expression in the page context. Returns the evaluated result."""
-    return _run_ab("eval", js)
+    """Run a JS expression in the page context. Returns the result as text."""
+    def _do(page, expr):
+        try:
+            v = page.evaluate(expr)
+            return json.dumps(v, default=str) if not isinstance(v, str) else v
+        except Exception as exc:
+            return f"ERROR: {exc}"
+    return _w().call(_do, js)
 
 
 def browser_screenshot(path: str = "/tmp/aitester-bdd-shot.png") -> str:
-    """Save a PNG screenshot of the current viewport to `path`."""
-    return _run_ab("screenshot", path)
+    """Save a PNG screenshot of the current viewport."""
+    def _do(page, p):
+        page.screenshot(path=p)
+        return f"OK: wrote {p}"
+    return _w().call(_do, path)
 
 
 def browser_close() -> str:
-    """Tear down the browser session. Call when authoring is complete."""
-    return _run_ab("close")
+    """Tear down the browser session."""
+    _shutdown_worker()
+    return "OK: browser session closed"
 
 
 # ─── File tools ───────────────────────────────────────────────────────
 
 
-_SOURCE_ROOT: Optional[Path] = None  # set by build_tools()
+_SOURCE_ROOT: Optional[Path] = None
 
 
 def _read_file(path: str) -> str:
     """Read a source file under the configured source_root.
 
     Used for white-box authoring: the agent can grep / read route
-    definitions, component files, etc. on demand instead of loading
-    them eagerly up front.
+    definitions, component files, etc. on demand.
     """
     if _SOURCE_ROOT is None:
         return "ERROR: read_file not enabled (no source_root configured)"
@@ -164,7 +413,7 @@ def _read_file(path: str) -> str:
 
 def _write_robot_suite(path: str, content: str) -> str:
     """TERMINAL TOOL. Write the .robot suite to `path` and signal that
-    authoring is complete. The agent loop will stop after this call."""
+    authoring is complete. The agent loop stops after this call."""
     try:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -176,8 +425,8 @@ def _write_robot_suite(path: str, content: str) -> str:
 
 def _report_bug(path: str, content: str) -> str:
     """TERMINAL TOOL. Write a bug report when the system is broken in a way
-    that prevents authoring a meaningful test. The agent loop will stop
-    after this call."""
+    that prevents authoring a meaningful test. The agent loop stops after
+    this call."""
     try:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -195,8 +444,8 @@ def build_tools(
 ) -> list[StructuredTool]:
     """Create the tool list for the authoring agent.
 
-    Browser tools are always included. The read_file tool is included
-    if source_root is provided (white-box mode). Terminal tools
+    Playwright browser tools are always included. The read_file tool is
+    only included when source_root is provided. Terminal tools
     (write_robot_suite, report_bug) are always included.
     """
     global _SOURCE_ROOT
@@ -210,31 +459,45 @@ def build_tools(
         StructuredTool.from_function(
             func=browser_snapshot, name="browser_snapshot",
             description=(
-                "Take an accessibility-tree snapshot of the current page. Returns CSS "
-                "selectors, data-testid, aria-label, role, text, attribute summaries. "
-                "Call this after every navigation or action — it is your source of "
-                "truth for selectors. Never invent a selector that is not in a snapshot."
+                "Take a CSS-grounded structured snapshot of the current page. "
+                "Returns URL + title + a list of interactive elements with their "
+                "REAL attributes (data-testid, placeholder, aria-label, id, name, "
+                "type, role, href, class). This is your source of truth for "
+                "selectors — never invent attributes that are not in the snapshot. "
+                "Call after every navigation or action that changes the page."
             ),
         ),
         StructuredTool.from_function(
             func=browser_click, name="browser_click", args_schema=CssParams,
-            description="Click an element by CSS selector.",
+            description="Click the first element matching the CSS selector.",
         ),
         StructuredTool.from_function(
             func=browser_type, name="browser_type", args_schema=TypeParams,
-            description="Fill an input element with text.",
+            description="Fill an input element with text (clears first).",
         ),
         StructuredTool.from_function(
             func=browser_get_text, name="browser_get_text", args_schema=CssParams,
-            description="Get the inner text of the first matching element.",
+            description="Get the inner text of the first element matching `css`.",
         ),
         StructuredTool.from_function(
             func=browser_get_count, name="browser_get_count", args_schema=CssParams,
-            description="Count how many elements match a selector.",
+            description="Count elements matching `css`.",
+        ),
+        StructuredTool.from_function(
+            func=browser_get_html, name="browser_get_html", args_schema=GetHtmlParams,
+            description=(
+                "Get outerHTML of the first matching element. Use when "
+                "browser_snapshot's per-element attribute summary is not enough "
+                "(nested children, computed values, full class list)."
+            ),
+        ),
+        StructuredTool.from_function(
+            func=browser_get_attr, name="browser_get_attr", args_schema=GetAttrParams,
+            description="Get a single attribute value from the first matching element.",
         ),
         StructuredTool.from_function(
             func=browser_eval, name="browser_eval", args_schema=EvalParams,
-            description="Run a JS expression in the page context. Returns the evaluated result.",
+            description="Run a JS expression in the page context. Returns the result as text.",
         ),
         StructuredTool.from_function(
             func=browser_screenshot, name="browser_screenshot",
@@ -252,9 +515,9 @@ def build_tools(
             StructuredTool.from_function(
                 func=_read_file, name="read_file", args_schema=ReadFileParams,
                 description=(
-                    "Read a source file under the configured source_root (white-box "
-                    "mode). Use to find route definitions, component files, "
-                    "data-testid declarations on demand."
+                    "Read a source file under the configured source_root "
+                    "(white-box mode). Use to find route definitions, "
+                    "data-testid declarations, component selectors."
                 ),
             ),
         )
@@ -264,21 +527,22 @@ def build_tools(
             func=_write_robot_suite, name="write_robot_suite",
             args_schema=WriteRobotSuiteParams,
             description=(
-                "TERMINAL TOOL. Write the complete .robot suite to the given path. "
-                "Call this only when you have driven the live target via agent-browser, "
-                "every selector in the suite traces to a snapshot you took, and you "
-                "are ready to hand the suite off. The agent loop stops after this call."
+                "TERMINAL TOOL. Write the complete .robot suite to the given "
+                "path. Call only when you have driven the live target, every "
+                "selector traces to a snapshot you took, and you are ready to "
+                "hand the suite off. The agent loop stops after this call."
             ),
         ),
         StructuredTool.from_function(
             func=_report_bug, name="report_bug",
             args_schema=ReportBugParams,
             description=(
-                "TERMINAL TOOL. Write a bug report when the system is broken in a way "
-                "that prevents authoring a meaningful test (unreachable URL, broken "
-                "auth, missing feature, untestable terminal state). The agent loop "
-                "stops after this call. Do NOT use for selector difficulty or async "
-                "timing — those are authoring problems, not system bugs."
+                "TERMINAL TOOL. Write a bug report when the system is broken "
+                "in a way that prevents authoring a meaningful test "
+                "(unreachable URL, broken auth, missing feature, untestable "
+                "terminal state). The agent loop stops after this call. Do NOT "
+                "use for selector difficulty or async timing — those are "
+                "authoring problems, not system bugs."
             ),
         ),
     ])

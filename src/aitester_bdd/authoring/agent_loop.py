@@ -129,16 +129,17 @@ def author_with_agent(
     suite_path: Path,
     bug_report_dir: Path,
     source_root: Optional[Path] = None,
+    engine: str = "agent-browser",
     max_iters: int = DEFAULT_MAX_ITERS,
 ) -> AuthoringResult:
     """Run the authoring agent loop.
 
     The agent decides what to do at each step. We give it:
       - story + base_url + the paths where terminal outputs should go
-      - the SKILL.md as system prompt (verbatim — same instructions a
-        human-driving agent would follow)
-      - tools: browser_*, optional read_file, write_robot_suite,
-        report_bug
+      - the engine name to declare in the authored suite (${ENGINE})
+      - the SKILL.md as system prompt
+      - tools: browser_* (Playwright sync API), optional read_file,
+        write_robot_suite, report_bug
 
     The agent either writes the suite (terminal) or files a bug report
     (terminal). If it exhausts max_iters without a terminal call, we
@@ -169,7 +170,12 @@ def author_with_agent(
         f"Base URL: {base_url}\n\n"
         f"You are authoring an aitester-bdd .robot test suite for this story. "
         f"Follow the SKILL instructions:\n"
-        f"  - Drive the live target via agent-browser tools to ground every selector.\n"
+        f"  - Drive the live target via the Playwright browser tools to ground "
+        f"every selector. Read attributes from browser_snapshot output and use "
+        f"data-testid / aria-label / placeholder / id / name / role from what "
+        f"the snapshot actually shows. Never invent attributes.\n"
+        f"  - Declare ${{ENGINE}}    {engine} in the *** Variables *** section "
+        f"of the suite so `aitester run` picks the matching runtime.\n"
         f"  - If the system is broken in a way that prevents authoring, file a bug report.\n\n"
         f"When you are ready:\n"
         f"  - For a .robot suite, call write_robot_suite with path={suite_path}\n"

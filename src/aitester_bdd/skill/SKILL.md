@@ -1,6 +1,6 @@
 ---
 name: aitester-bdd
-description: Author Robot Framework BDD test suites for web apps. You (the agent) drive a live browser via agent-browser to explore the target, then produce a deterministic .robot file using the shipped keyword grammar — or a bug report if the system itself is broken in a way that prevents authoring. Use when given a story (intention) and a base URL.
+description: Author Robot Framework BDD test suites for web apps. You (the agent) drive a Playwright browser via the browser_* tools to explore the target, then produce a deterministic .robot file using the shipped keyword grammar — or a bug report if the system itself is broken in a way that prevents authoring. Selectors are grounded in real DOM attributes from browser_snapshot, never inferred. Use when given a story (intention) and a base URL.
 metadata:
   author: kundeng
   version: "0.2.0"
@@ -35,62 +35,93 @@ Do not use when: there's no live target to drive (no URL); the user is hand-writ
 
 | Phase | What you do | Tool |
 |-------|-------------|------|
-| Orient | Confirm env: RF, rfbrowser, agent-browser, LLM config. If rfbrowser is installed but NOT initialized, run `aitester init-browser` once. | `aitester doctor` |
-| Explore | Drive the **live target** via `agent-browser`. Log in if needed, navigate the actual pages of the story, take snapshots at each step. Record selectors you can prove exist. | `agent-browser open / snapshot / click / type / ...` |
-| Author | Write `suite.robot` using ONLY the keywords in § 4. Every selector must come from a snapshot you took during Explore. | Edit / Write |
+| Orient | Confirm env: RF, Playwright explorer chromium, LLM config. If missing, run `aitester init-browser`. | `aitester doctor` |
+| Explore | Drive the **live target** via the Playwright `browser_*` tools. Log in if needed, navigate the pages the story passes through, take a `browser_snapshot` at each step. Record selectors you can prove exist. | `browser_open / browser_snapshot / browser_click / browser_type / ...` |
+| Author | Write `suite.robot` using ONLY the keywords in § 4. Every selector must come from an attribute in a `browser_snapshot` you took. Declare `${ENGINE}` in `*** Variables ***`. | `write_robot_suite` tool |
 | Review | `robot --dryrun` must pass cleanly. Fix any unknown-keyword / arg-shape errors. | `robot --dryrun suite.robot` |
-| Refine | If a real run fails, re-explore the failing step, patch the suite. | `agent-browser` + edit |
+| Refine | If a real run fails, re-explore the failing step via `browser_*` tools, patch the suite. | `browser_*` + edit |
 | Ship | Hand `suite.robot` to the user. They run `robot suite.robot` without you. | — |
 
-### Three runtime backends, one authored suite
+### One explorer, three runtime backends
 
-The authored `.robot` declares only `Library  aitester_bdd.AITester`. At
-run time, the walker dispatches to whichever backend `AITESTER_BROWSER`
-selects. All three present the same DOM-driving surface; **the same
-suite runs on all three.**
+**Exploration is Playwright only.** That's the only browser dialect
+that exposes real CSS-grounded attributes natively. Authoring drives
+Playwright sync API via the tools listed below; every selector in the
+authored suite comes from a real `browser_snapshot` entry.
 
-| Backend (`AITESTER_BROWSER=`) | When to pick | Setup needed |
-|------------------------------|--------------|--------------|
-| `agent-browser` (default) | Most cases. Same CLI you used during Explore, so the run-time DOM view is identical to the author-time one — no cross-driver selector drift. | None — the CLI ships its own browser. |
-| `playwright` | Action-heavy tests where subprocess-per-call latency matters; in-process Playwright is faster. | `aitester init-browser` once (downloads Playwright browsers). |
-| `nodriver` | Sites with bot detection (DataDome, Cloudflare Bot Management, PerimeterX, etc.) that fingerprint Playwright. Or when you want to skip the Playwright install entirely. | `pip install aitester-bdd[stealth]` + Edge or Chrome on the system. |
+**Run-time backend is your choice, declared in the suite.** All three
+runtime backends accept CSS selectors, so the same authored `.robot`
+runs on any of them. Pick by setting `${ENGINE}` in `*** Variables ***`:
 
-Picking a backend doesn't change the authored suite. It changes only
-the driver underneath. If a test passes against `agent-browser` but
-fails against `playwright` (or vice versa), that's a real cross-driver
-DOM-view bug — file it. The default of `agent-browser` minimizes that
-risk because the agent that authored the suite was already driving it.
-
-### `agent-browser` quick reference
-
-This is your eyes and hands during Explore. Sessions persist across calls — chain with `&&`.
-
-```bash
-agent-browser open <url>              # navigate
-agent-browser snapshot                # accessibility tree of current page
-agent-browser snapshot -c -d 3        # include CSS classes, depth 3
-agent-browser get count '<css>'       # count matching elements
-agent-browser get text '<css>'        # text content
-agent-browser get html '<css>'        # outer HTML
-agent-browser click '<css>'           # click
-agent-browser type '<css>' '<text>'   # fill input
-agent-browser eval '<js>'             # run JS in page context
-agent-browser screenshot              # save PNG (for visual checks)
-agent-browser close                   # tear down session
+```robot
+*** Variables ***
+${ENGINE}    agent-browser   # or "playwright" or "nodriver"
 ```
 
-If `agent-browser` is missing, stop and tell the user — don't try to author blind.
+`aitester run` reads `${ENGINE}` and sets `AITESTER_BROWSER` so the
+walker picks the matching backend.
+
+| `${ENGINE}` value | When to pick | Run-time setup needed |
+|-------------------|--------------|------------------------|
+| `agent-browser` (default for new suites) | Zero install at run time. CLI ships its own browser. | None at run time. |
+| `playwright` | Action-heavy tests where in-process Playwright is faster than subprocess-per-call. | `aitester init-browser` once. |
+| `nodriver` | Sites with bot detection (DataDome / Cloudflare BM / etc.) that fingerprint Playwright. | `pip install aitester-bdd[stealth]` + Edge/Chrome on the system. |
+
+Picking a backend doesn't change the authored suite. If a test passes
+against one runtime but fails on another, that's a real cross-driver
+DOM-view bug worth filing. CSS is the lingua franca of all three.
+
+### Playwright explorer tool reference
+
+Your eyes and hands during Explore. Tools are exposed by the agent
+loop and call Playwright sync API in a worker thread. A single
+browser session is maintained across all tool calls — `browser_open`
+once, then issue many `browser_snapshot` / `browser_click` etc.
+against the same page.
+
+| Tool | Purpose |
+|------|---------|
+| `browser_open(url)` | Navigate. Persistent session. |
+| `browser_snapshot()` | **Your source of truth for selectors.** Returns URL + title + a list of interactive/landmark elements with their real attributes (`data-testid`, `placeholder`, `aria-label`, `id`, `name`, `type`, `role`, `href`, `class`). Call after every navigation or action that changes the page. |
+| `browser_click(css)` | Click. CSS selector. |
+| `browser_type(css, text)` | Fill an input (clears first). |
+| `browser_get_text(css)` | Inner text of first matching element. |
+| `browser_get_count(css)` | Number of matching elements. |
+| `browser_get_html(css)` | Outer HTML of first match — use when snapshot's per-element summary isn't enough (need full child tree, exact class list, etc.). |
+| `browser_get_attr(css, name)` | Single attribute value. |
+| `browser_eval(js)` | Run JS in page context. |
+| `browser_screenshot(path)` | Save PNG. |
+| `browser_close()` | Tear down session. |
+| `read_file(path)` | (white-box mode only) Read a source file under the configured source_root — useful for finding `data-testid` declarations or route mounts in the source code. |
+
+### Selector priority (non-negotiable)
+
+When constructing a CSS selector from a `browser_snapshot` entry, pick
+the most stable available attribute in this order:
+
+1. **`[data-testid="..."]`** — most stable; never inferred, always real
+2. **`role+name`** — for buttons/links with accessible names
+3. **`[aria-label="..."]`**
+4. **`[id="..."]`** when not auto-generated (avoid `id="r:0:"` etc.)
+5. **`[name="..."]`** for form inputs
+6. **`[placeholder="..."]`** when nothing better
+7. Stable class (no `Mui-...-12345`-style hash)
+8. Visible text via `:has-text("...")` — last resort
 
 ### Exploration-first rule (non-negotiable)
 
-Before you write a single selector in the suite, you must have driven that part of the flow live via `agent-browser` and confirmed:
+Before you write a single selector in the suite, you must have driven
+that part of the flow live via the Playwright browser tools and
+confirmed:
 
-- The entry URL loads (status, redirect target).
+- The entry URL loads.
 - The auth flow (if any) works with the credentials you'll bake into the suite.
-- Every page the story passes through actually renders, and the elements you'll target are real.
+- Every page the story passes through actually renders, and the elements you'll target appear in a `browser_snapshot` you took.
 - The terminal state of the story (the thing the test verifies) is observable on the page.
 
-If any of those is not true, you do **NOT** invent a selector to cover the gap. You write a **bug report** (§ 1.2). Imagined selectors look like passing tests when they're really testing nothing.
+**Selectors in the authored suite MUST come from the snapshot's attribute output.** If `browser_snapshot` shows `<input placeholder="Username">` with no `data-testid`, your selector is `input[placeholder="Username"]` — not the made-up `input[autocomplete=username]`. If you find yourself guessing, take another snapshot or call `browser_get_html(css)` to see the actual outerHTML.
+
+If the page is broken in a way that prevents authoring, you do **NOT** invent a selector to cover the gap. You write a **bug report** (§ 1.2).
 
 ### Bug report shape
 
@@ -123,7 +154,7 @@ Keep it short. The point is to surface "system is broken here" to a human, not p
 
 ## 2 — Non-Negotiables
 
-1. **You explore the live target via `agent-browser` BEFORE writing selectors.** Every selector in the suite must trace to a snapshot you took.
+1. **You explore the live target via the Playwright `browser_*` tools BEFORE writing selectors.** Every selector in the suite must trace to an attribute in a `browser_snapshot` you took. No inferring from common HTML conventions.
 2. **Two outputs only:** a `.robot` suite, or a bug report. No half-authored "I hope this works" suites.
 3. Output only valid Robot Framework syntax in `.robot` files.
 4. All executable steps use `Given`, `When`, `Then`, `And`, or `But`.
@@ -150,6 +181,7 @@ Suite Setup       Given I start verification "${DEPLOYMENT}"
 Suite Teardown    Then I finalize verification
 
 *** Variables ***
+${ENGINE}           agent-browser        # runtime backend; aitester run reads this
 ${DEPLOYMENT}       prismi3-dev
 ${BASE_URL}         http://localhost:5173
 ${ADMIN_USER}       admin
@@ -159,6 +191,11 @@ ${ADMIN_PASSWORD}   admin
 Auth Flow                # one rule per test case OR rules grouped into one case
 Case Approval Roundtrip  # the intention being verified
 ```
+
+`${ENGINE}` selects the runtime backend: `agent-browser` (default,
+zero install at run time), `playwright` (faster but needs `rfbrowser
+init`), or `nodriver` (bot-resistant, needs `aitester-bdd[stealth]`).
+Exploration is always Playwright regardless of this value.
 
 ### Structural mapping (story → suite)
 
@@ -590,7 +627,7 @@ You agreed to all of these by invoking this skill:
 
 | Bad | Good |
 |-----|------|
-| Author the suite without ever calling `agent-browser` | Drive the live flow first, then write |
+| Author the suite without ever calling `browser_snapshot` | Drive the live flow first, then write |
 | `When I navigate to the case detail page` | `When I open "${BASE_URL}/#/case/MAIN-0168"` |
 | `Then I see the approved badge` | `Then locator ".decision-badge" has text "Approved"` |
 | `When I wait 3 seconds for the page to load` | `And selector "[data-testid=overview-page]" exists` |
@@ -639,31 +676,43 @@ Record each as a pair: triggering action + completion selector. These become obs
 | `examples/quickstart/login_smoke.robot` | Minimal working example — login + open case + verify renders |
 | `engine/README.md` | The walker's gotcha-fix map (what it handles for you at run time) |
 
-## 11 — Common patterns for `agent-browser` during Explore
+## 11 — Common Explore patterns (Playwright tools)
 
-```bash
+```text
 # Discover what's at the entry URL
-agent-browser open "${BASE_URL}" && agent-browser snapshot
+browser_open("${BASE_URL}")
+browser_snapshot()
+  → Reads: list of <input>, <button>, <a>, [data-testid=...], etc.
+    with their REAL attributes (data-testid, placeholder, aria-label,
+    id, name, type, role, class). Pick selectors from these.
 
 # Drive an auth flow before the actual test surface exists
-agent-browser open "${BASE_URL}/#/login" \
-  && agent-browser type 'input[name=username]' 'admin' \
-  && agent-browser type 'input[name=password]' 'admin' \
-  && agent-browser click 'button[type=submit]' \
-  && agent-browser snapshot          # confirm the post-login page
+browser_open("${BASE_URL}/#/login")
+browser_snapshot()             # find the real input attributes
+browser_type("[selector chosen from snapshot]", "admin")
+browser_type("[selector chosen from snapshot]", "admin")
+browser_click("[selector chosen from snapshot]")
+browser_snapshot()             # confirm the post-login page
 
 # Reach the page the story is about, snapshot every transition
-agent-browser open "${BASE_URL}/#/case/MAIN-0168" \
-  && agent-browser snapshot
+browser_open("${BASE_URL}/#/case/MAIN-0168")
+browser_snapshot()
+
+# When an element's full attribute set isn't surfaced by snapshot
+browser_get_html("[role=dialog]")    # see the full subtree
+browser_get_attr("[data-testid=approve-btn]", "aria-disabled")
 
 # Probe an interactive element you intend to use in the suite
-agent-browser get count '[data-testid=case-approve]'
+browser_get_count("[data-testid=case-approve]")
 
 # Take a screenshot if you'll need a visual_semantic check
-agent-browser screenshot
+browser_screenshot("/tmp/aitester-shot.png")
 ```
 
-After each `snapshot`, note: the selectors you'll use, the data-testids you saw, the URL the SPA is now on, the text content of elements you'll assert against. Only THEN open the editor and write `suite.robot`.
+After each `browser_snapshot`, note: the selectors you'll use (pulled
+from the actual attributes shown), the URL the SPA is now on, the text
+of elements you'll assert against. Only THEN open the editor and call
+`write_robot_suite`.
 
 ## 12 — Emit: intention-driven, never auto-dumped
 
@@ -760,7 +809,7 @@ You write `triage/<story-slug>.md` (NOT a `.robot` suite) when any of these is t
 - The auth flow specified in the story doesn't accept the credentials provided.
 - The page the story is about doesn't render, errors out, or is missing the element the story is about ("approve case" but no approve button exists).
 - The terminal state the story wants to verify is not observable (story says "the decision persists" but the page shows no decision indicator anywhere).
-- The agent-browser CLI itself errors out repeatedly (target not driveable).
+- The Playwright browser itself errors out repeatedly (target not driveable, e.g. cannot connect / TLS error / SSL pinning rejecting localhost).
 
 Do NOT file a bug report for:
 - Selectors you couldn't guess — that's a "take another snapshot" problem, not a bug.

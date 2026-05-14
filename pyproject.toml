@@ -22,7 +22,15 @@ classifiers = [
 ]
 dependencies = [
     "robotframework>=7.0",
+    # rfbrowser is the in-process Playwright RUNTIME backend. Optional in
+    # practice (other runtime backends work), but kept in base deps because
+    # most suites declare it.
     "robotframework-browser>=18.0",
+    # Authoring-time explorer: Playwright Python sync API.
+    # The agent drives a real Playwright browser to take CSS-grounded
+    # snapshots (returns each element's actual data-testid / aria-label /
+    # placeholder / id / name / class) — no inferred selectors.
+    "playwright>=1.45",
     # In-walker semantic / visual_semantic escape hatch (one-shot LLM call,
     # no tools needed at run time) — keep litellm as the simple multi-provider
     # client.
