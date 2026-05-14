@@ -653,9 +653,21 @@ class AITester:
     def then_url_matches(self, pattern: str) -> None:
         self._current_rule().items.append(StateCheck("url_matches", expected=_strip_quotes(pattern)))
 
+    def _url_does_not_contain(self, pattern: str) -> None:
+        """Internal helper — Grammar particles But/And/Then route here."""
+        self._current_rule().items.append(StateCheck("url_not_contains", expected=_strip_quotes(pattern)))
+
     @keyword("But url does not contain \"${pattern}\"")
     def but_url_does_not_contain(self, pattern: str) -> None:
-        self._current_rule().items.append(StateCheck("url_not_contains", expected=_strip_quotes(pattern)))
+        self._url_does_not_contain(pattern)
+
+    @keyword("And url does not contain \"${pattern}\"")
+    def and_url_does_not_contain(self, pattern: str) -> None:
+        self._url_does_not_contain(pattern)
+
+    @keyword("Then url does not contain \"${pattern}\"")
+    def then_url_does_not_contain(self, pattern: str) -> None:
+        self._url_does_not_contain(pattern)
 
     # ------------------------------------------------------------------
     # State Checks — Element Existence
@@ -673,9 +685,20 @@ class AITester:
     def then_selector_exists(self, css: str) -> None:
         self._current_rule().items.append(StateCheck("selector_exists", locator=_strip_quotes(css)))
 
+    def _selector_does_not_exist(self, css: str) -> None:
+        self._current_rule().items.append(StateCheck("selector_missing", locator=_strip_quotes(css)))
+
     @keyword("But selector \"${css}\" does not exist")
     def but_selector_does_not_exist(self, css: str) -> None:
-        self._current_rule().items.append(StateCheck("selector_missing", locator=_strip_quotes(css)))
+        self._selector_does_not_exist(css)
+
+    @keyword("And selector \"${css}\" does not exist")
+    def and_selector_does_not_exist(self, css: str) -> None:
+        self._selector_does_not_exist(css)
+
+    @keyword("Then selector \"${css}\" does not exist")
+    def then_selector_does_not_exist(self, css: str) -> None:
+        self._selector_does_not_exist(css)
 
     # ------------------------------------------------------------------
     # State Checks — Counts
@@ -709,9 +732,20 @@ class AITester:
     def then_matches(self, css: str, regex: str) -> None:
         self._current_rule().items.append(StateCheck("matches", locator=_strip_quotes(css), expected=_strip_quotes(regex)))
 
+    def _not_contains(self, css: str, substring: str) -> None:
+        self._current_rule().items.append(StateCheck("not_contains", locator=_strip_quotes(css), expected=_strip_quotes(substring)))
+
     @keyword("But locator \"${css}\" does not contain \"${substring}\"")
     def but_not_contains(self, css: str, substring: str) -> None:
-        self._current_rule().items.append(StateCheck("not_contains", locator=_strip_quotes(css), expected=_strip_quotes(substring)))
+        self._not_contains(css, substring)
+
+    @keyword("And locator \"${css}\" does not contain \"${substring}\"")
+    def and_not_contains(self, css: str, substring: str) -> None:
+        self._not_contains(css, substring)
+
+    @keyword("Then locator \"${css}\" does not contain \"${substring}\"")
+    def then_not_contains(self, css: str, substring: str) -> None:
+        self._not_contains(css, substring)
 
     # ------------------------------------------------------------------
     # State Checks — Element State
@@ -741,9 +775,20 @@ class AITester:
     def then_has_class(self, css: str, name: str) -> None:
         self._current_rule().items.append(StateCheck("has_class", locator=_strip_quotes(css), expected=_strip_quotes(name)))
 
+    def _not_class(self, css: str, name: str) -> None:
+        self._current_rule().items.append(StateCheck("not_class", locator=_strip_quotes(css), expected=_strip_quotes(name)))
+
     @keyword("But locator \"${css}\" does not have class \"${name}\"")
     def but_not_class(self, css: str, name: str) -> None:
-        self._current_rule().items.append(StateCheck("not_class", locator=_strip_quotes(css), expected=_strip_quotes(name)))
+        self._not_class(css, name)
+
+    @keyword("And locator \"${css}\" does not have class \"${name}\"")
+    def and_not_class(self, css: str, name: str) -> None:
+        self._not_class(css, name)
+
+    @keyword("Then locator \"${css}\" does not have class \"${name}\"")
+    def then_not_class_kw(self, css: str, name: str) -> None:
+        self._not_class(css, name)
 
     @keyword("Then locator \"${css}\" has attribute \"${attr}\" equal to \"${value}\"")
     def then_attr_eq(self, css: str, attr: str, value: str) -> None:

@@ -122,10 +122,27 @@ def _eval_state_check(
         return (ok, f"url contains {expected!r}", obs)
     if kind == "url_matches":
         obs = browser.url()
-        return (bool(re.search(expected, obs)), f"url matches {expected!r}", obs)
+        ok = bool(re.search(expected, obs))
+        if not ok and timeout_ms >= 500:
+            end = time.time() + timeout_ms / 1000
+            while time.time() < end and not ok:
+                time.sleep(0.1)
+                obs = browser.url()
+                ok = bool(re.search(expected, obs))
+        return (ok, f"url matches {expected!r}", obs)
     if kind == "url_not_contains":
         obs = browser.url()
-        return (expected not in obs, f"url not contains {expected!r}", obs)
+        ok = expected not in obs
+        # Symmetric with url_contains: poll until URL transitions AWAY from
+        # the unwanted pattern. Common after submitting a form that
+        # triggers async SPA navigation.
+        if not ok and timeout_ms >= 500:
+            end = time.time() + timeout_ms / 1000
+            while time.time() < end and not ok:
+                time.sleep(0.1)
+                obs = browser.url()
+                ok = expected not in obs
+        return (ok, f"url not contains {expected!r}", obs)
 
     # ── Element existence ─────────────────────────────────────────────
     if kind == "selector_exists":
