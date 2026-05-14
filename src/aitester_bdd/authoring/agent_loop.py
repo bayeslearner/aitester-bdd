@@ -90,11 +90,11 @@ def _build_llm():
     base_url = os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL)
     api_key = os.environ.get("OPENAI_API_KEY", DEFAULT_API_KEY)
 
+    # NB: opus-4.7 rejects `temperature` as deprecated; omit it.
     return ChatOpenAI(
         model=model,
         base_url=base_url,
         api_key=api_key,
-        temperature=0.2,
         timeout=120.0,
     )
 
