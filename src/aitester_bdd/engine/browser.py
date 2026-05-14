@@ -338,6 +338,122 @@ class BrowserAdapter:
                 return "__NAVIGATED__"
             raise
 
+    def add_url_params(self, params: str) -> None:
+        """Add query params to current URL and navigate.
+
+        Ported from WISE. Uses URLSearchParams in the page context so
+        existing params survive. Suppresses the destroyed-context error
+        that the navigation itself raises.
+        """
+        script = (
+            f"() => {{ const u = new URL(window.location.href); "
+            f"new URLSearchParams({json.dumps(params)}).forEach((v, k) => "
+            f"u.searchParams.set(k, v)); "
+            f"window.location.href = u.toString(); }}"
+        )
+        try:
+            self.evaluate_js(script)
+        except Exception:
+            pass  # navigation destroys context — handled by evaluate_js
+        self.wait_for_load_state("domcontentloaded", timeout="5s")
+
+    def select_date(
+        self, date_iso: str, *, forward_sel: str = 'button[aria-label*="Move forward"]',
+        heading_sel: str = "h2", max_clicks: int = 15,
+    ) -> None:
+        """Navigate a datepicker to the target month and click the day.
+
+        Ported from WISE. Works with ARIA-compliant datepickers:
+        - Month headings visible as h2/h3
+        - Forward button advances the calendar
+        - Day buttons have aria-labels containing the date info
+
+        date_iso is YYYY-MM-DD. Polls until heading text changes between
+        clicks (calendar re-rendered) — fixed waits would race re-mount.
+        """
+        from datetime import date as dt_date
+
+        try:
+            year, month, day = (int(x) for x in date_iso.split("-"))
+            d = dt_date(year, month, day)
+        except (ValueError, TypeError):
+            log.warning("select_date: invalid ISO date %r", date_iso)
+            return
+        month_year = d.strftime("%B %Y")
+        day_str = str(day)  # no leading zero
+
+        if not self.wait_for_elements_state(forward_sel, "attached", timeout_ms=5000):
+            log.warning("select_date: forward button not found: %s", forward_sel)
+            return
+
+        check_script = (
+            f"(() => {{ "
+            f"const headings = []; "
+            f"for (const h of document.querySelectorAll({json.dumps(heading_sel)})) "
+            f"{{ const t = h.textContent.trim(); headings.push(t); "
+            f"if (t === {json.dumps(month_year)}) return {{found: true, headings}}; }} "
+            f"return {{found: false, headings}}; }})()"
+        )
+        fwd_script = (
+            f"(() => {{ const btn = document.querySelector({json.dumps(forward_sel)}); "
+            f"if (btn) {{ btn.click(); return true; }} return false; }})()"
+        )
+        for _ in range(max_clicks):
+            result = self.evaluate_js(check_script)
+            if isinstance(result, dict) and result.get("found"):
+                break
+            old_headings = result.get("headings", []) if isinstance(result, dict) else []
+            if not self.evaluate_js(fwd_script):
+                break
+            # Poll until heading text changes (calendar re-rendered)
+            deadline = time.time() + 3.0
+            while time.time() < deadline:
+                new_result = self.evaluate_js(check_script)
+                new_headings = (
+                    new_result.get("headings", []) if isinstance(new_result, dict) else []
+                )
+                if new_headings != old_headings:
+                    break
+
+        click_script = (
+            f"(() => {{ "
+            f"for (const b of document.querySelectorAll('button')) {{ "
+            f"const l = b.getAttribute('aria-label') || ''; "
+            f"if (l.startsWith({json.dumps(day_str + ', ')}) && "
+            f"l.includes({json.dumps(month_year)})) "
+            f"{{ b.click(); return true; }} }} return false; }})()"
+        )
+        if not self.evaluate_js(click_script):
+            log.warning("select_date: could not find day button for %s", date_iso)
+
+    def call_keyword(self, kw_name: str, args: list) -> None:
+        """Defer to an arbitrary Robot Framework keyword.
+
+        Ported from WISE — the escape hatch for multi-step user flows
+        defined in a *** Keywords *** block. Only works when running
+        inside RF (BuiltIn() must be available).
+        """
+        try:
+            from robot.libraries.BuiltIn import BuiltIn
+            BuiltIn().run_keyword(kw_name, *args)
+        except Exception as exc:
+            log.warning("call_keyword %r failed: %s", kw_name, exc)
+            raise
+
+    def browser_step(self, method_name: str, args: list) -> Any:
+        """Call any method directly on the underlying Browser library.
+
+        Ported from WISE — escape hatch for RF-Browser methods not in the
+        adapter surface. Use sparingly; missing surface should be added
+        as a proper method here instead.
+        """
+        b = self._rf_browser()
+        method = getattr(b, method_name, None)
+        if method is None or not callable(method):
+            log.warning("browser_step: method %r not found", method_name)
+            return None
+        return method(*args)
+
     def set_stepper(self, selector: str, count: int) -> None:
         """Click a self-re-rendering stepper N times via JS.
 

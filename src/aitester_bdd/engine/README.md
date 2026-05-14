@@ -4,25 +4,29 @@
 
 ```
 engine/
-  walk.py            — rule DAG walker (ports WISE _walk_rule + friends)
-  browser.py         — BrowserAdapter (ports WISE _PlaywrightAdapter gotcha-fixes)
-  verdict.py         — RuleResult + Verdict (testing-specific evidence)
-  _wise_source.py    — vendored WISE engine, kept for reference
+  walk.py     — rule DAG walker (ports WISE _walk_rule + friends)
+  browser.py  — BrowserAdapter (ports WISE _PlaywrightAdapter gotcha-fixes)
+  verdict.py  — RuleResult + Verdict (testing-specific evidence)
 ```
 
-`_wise_source.py` is a verbatim copy of the WISE RPA BDD engine. It is
-the source of truth for every gotcha-fix the walker has ported. If a
-test fails or a real-site regression appears, **diff walk.py against
-_wise_source.py before "fixing" by deleting code** — the deletion is
-almost certainly removing a battle-tested gotcha-fix.
+The walker is a *port* of the WISE RPA BDD execution engine, not a
+clean-room reimplementation. The architecture is shaped to **test**
+(RuleResult / Verdict failure model) rather than **scrape** (WISE's
+extraction + checkpoint + emit pipeline), but the execution-time
+behaviors that matter on real sites — dismiss-interrupts, guard
+retry-redo, action retry-once, fallback selector resolution, `await=`
+observation gates, navigation-aware JS, click_text fallback,
+set_stepper JS-click — were ported with the WISE source as authority.
 
-The walker is a *port*, not a clean-room reimplementation. The
-architecture is shaped to test (RuleResult/Verdict failure model) rather
-than scrape (WISE's extraction + checkpoint + emit pipeline), but the
-execution-time behaviors that matter on real sites — dismiss-interrupts,
-guard retry-redo, action retry-once, fallback selector resolution,
-`await=` observation gates, navigation-aware JS, click_text fallback,
-set_stepper JS-click — are all ported with the WISE source as authority.
+The vendored WISE source was used as the reference during the port and
+removed once the relevant logic landed here. Don't restore it; if you
+need to diff against upstream, fetch from the wise-rpa-bdd skill repo
+rather than re-vendoring.
+
+When porting another piece of upstream behavior, **read the upstream
+method first and port the real logic, not a re-derivation from the
+architecture diagram.** Clean-room rewrites of battle-tested code lose
+every gotcha-fix that wasn't obvious from the high-level shape.
 
 ## What's ported
 
@@ -78,4 +82,4 @@ WISE is a scraper; aitester-bdd is a tester. These were dropped:
 
 * When porting another WISE method into the engine.
 * When the testing semantics diverge from WISE somewhere new.
-* When `_wise_source.py` is updated (sync from upstream wise-rpa-bdd).
+* When upstream wise-rpa-bdd ships a new gotcha-fix worth porting.

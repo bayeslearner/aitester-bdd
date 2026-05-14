@@ -296,10 +296,26 @@ def _eval_action(browser: BrowserAdapter, action: "Action") -> None:
         browser.evaluate_js(action.value)
     elif kind == "set_stepper":
         browser.set_stepper(target, int(action.value or "0"))
+    elif kind == "add_params":
+        browser.add_url_params(action.value)
+    elif kind == "select_date":
+        # action.value = ISO date (YYYY-MM-DD); options carry forward_sel etc.
+        opts = action.options or {}
+        kw_args = {}
+        if "forward" in opts:
+            kw_args["forward_sel"] = opts["forward"]
+        if "heading" in opts:
+            kw_args["heading_sel"] = opts["heading"]
+        if "max_clicks" in opts:
+            try:
+                kw_args["max_clicks"] = int(opts["max_clicks"])
+            except (ValueError, TypeError):
+                pass
+        browser.select_date(action.value, **kw_args)
     elif kind == "browser_step":
-        log.warning("browser_step passthrough not yet supported: %s", action.target)
+        browser.browser_step(action.target, action.options.get("args", []))
     elif kind == "call_keyword":
-        log.warning("call_keyword passthrough not yet supported: %s", action.target)
+        browser.call_keyword(action.target, action.options.get("args", []))
     else:
         log.warning("unknown action %s", kind)
 
@@ -615,6 +631,48 @@ def _walk_rule(
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _run_state_setup(browser: BrowserAdapter, verification: "Verification") -> None:
+    """Execute suite-level state setup (auth, consent) before any scenario.
+
+    Ported from WISE _run_setup. If `state_setup.skip_when` is a CSS
+    selector that matches the current page (e.g., a logged-in marker),
+    setup is skipped. Otherwise each action runs in order:
+      - action=open url=...      → navigate
+      - action=input css=... value=...  → fill text
+      - action=password css=... value=...  → fill text (treated as secret)
+      - action=click css=...     → click
+
+    All errors are logged + skipped so a misconfigured setup doesn't
+    block the test run with a cryptic adapter error.
+    """
+    ss = verification.state_setup
+    if not ss.actions:
+        return
+    if ss.skip_when:
+        try:
+            if browser.get_count(ss.skip_when) > 0:
+                log.info("state_setup: skipped — skip_when %r matched", ss.skip_when)
+                return
+        except Exception:
+            pass
+    for sa in ss.actions:
+        action = sa.get("action", "")
+        try:
+            if action == "open":
+                browser.open(sa.get("url", ""))
+            elif action == "input":
+                browser.type(sa.get("css", ""), sa.get("value", ""), secret=False)
+            elif action == "password":
+                browser.type(sa.get("css", ""), sa.get("value", ""), secret=True)
+            elif action == "click":
+                browser.click(sa.get("css", ""))
+            else:
+                log.warning("state_setup: unknown action %r", action)
+        except Exception as exc:
+            log.warning("state_setup %s failed: %s", action, exc)
+    browser.wait_for_load_state("networkidle", timeout="10s")
+
+
 def walk_verification(verification: "Verification") -> Verdict:
     """Walk all scenarios in a Verification; return a Verdict.
 
@@ -631,6 +689,9 @@ def walk_verification(verification: "Verification") -> Verdict:
     browser = BrowserAdapter()
     browser.new_session(headless=True)
     try:
+        # Suite-level state setup (auth, consent) — runs once before any
+        # scenario. Ported from WISE.
+        _run_state_setup(browser, verification)
         for sc in verification.scenarios:
             if sc.entry_url:
                 browser.open(sc.entry_url)

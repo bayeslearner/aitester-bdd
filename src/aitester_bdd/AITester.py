@@ -567,6 +567,21 @@ class AITester:
     def when_take_screenshot(self, *opts: str) -> None:
         self._current_rule().items.append(Action("screenshot", options=_parse_options(opts)))
 
+    @keyword("When I set stepper \"${css}\" to ${count}")
+    def when_set_stepper(self, css: str, count: str) -> None:
+        """Click a self-re-rendering stepper N times via JS click."""
+        self._current_rule().items.append(
+            Action("set_stepper", target=_strip_quotes(css), value=str(int(count)))
+        )
+
+    @keyword("When I select date \"${date_iso}\"")
+    def when_select_date(self, date_iso: str, *opts: str) -> None:
+        """Navigate an ARIA datepicker to the target month + click the day.
+        Options: forward=<css>, heading=<css>, max_clicks=<n>."""
+        self._current_rule().items.append(
+            Action("select_date", value=_strip_quotes(date_iso), options=_parse_options(opts))
+        )
+
     # ------------------------------------------------------------------
     # Hooks & Interrupts
     # ------------------------------------------------------------------

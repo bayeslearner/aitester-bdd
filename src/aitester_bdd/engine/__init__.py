@@ -1,5 +1,8 @@
 """Plan-then-Execute rule DAG engine for BDD test execution.
 
-Architecture borrowed from the WISE RPA BDD skill (see _wise_source.py),
-retargeted from web extraction to web verification.
+The walker and browser adapter are ports from the WISE RPA BDD engine,
+adapted from web extraction to web verification. The vendored WISE
+source was used as the reference during the port and has been removed
+once the relevant logic landed here. See engine/README.md for the
+ported method map and what was deliberately dropped.
 """

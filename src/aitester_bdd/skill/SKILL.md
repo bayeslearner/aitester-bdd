@@ -249,8 +249,22 @@ The full keyword surface for state checks:
 | `When I hover locator "${css}"` / `When I focus locator "${css}"` | |
 | `When I press keys "${css}"` | Keys as continuation args |
 | `When I upload file "${path}" to locator "${css}"` | |
+| `When I set stepper "${css}" to ${count}` | Click a self-re-rendering stepper N times via JS-click (avoids Playwright stability errors) |
+| `When I select date "${YYYY-MM-DD}"` | Navigate ARIA datepicker to target month, click day; options: `forward=<css>`, `heading=<css>`, `max_clicks=<n>` |
 
-### 4.6 Expansion (parametric scenarios)
+### 4.6 Per-rule policy
+
+| Keyword | Purpose |
+|---------|---------|
+| `And I set retry ${max} times with ${delay} ms delay` | If guards fail, replay body + recheck up to N times |
+| `And I set guard policy "${policy}"` | `skip` (default) or `abort` (raise to stop whole walk) |
+| `And I set rule timeout ${ms} ms` | Per-rule deadline; body exceeding it fails the rule |
+| `And I pause interrupts` | Suppress dismiss-overlays inside this rule (when testing the modal itself) |
+| `And I scope interrupts to "${selectors}"` | Replace the verification-wide dismiss list for this rule (comma-separated) |
+| `And I screenshot on enter` | Snapshot when the rule starts (for debugging entry state) |
+| `And I screenshot on fail` | Snapshot on any failure within the rule |
+
+### 4.7 Expansion (parametric scenarios)
 
 | Keyword | Purpose |
 |---------|---------|
@@ -258,7 +272,7 @@ The full keyword surface for state checks:
 | `When I expand over data "${path}"` | Run child rules per CSV/JSON row |
 | `When I expand over combinations` | Cartesian product across `control=`/`values=` axes |
 
-### 4.7 Hooks & Interrupts
+### 4.8 Hooks & Interrupts
 
 | Keyword | Purpose |
 |---------|---------|
@@ -266,7 +280,7 @@ The full keyword surface for state checks:
 | `And I configure interrupts` | Auto-dismiss overlays: `dismiss=<css>` (must be surgical — § 6.4) |
 | `And I configure state setup` | Pre-test auth: `skip_when=<url>`, `action=open url=`, `action=input css= value=`, `action=password css= value=`, `action=click css=` |
 
-### 4.8 Timing & Debug
+### 4.9 Timing & Debug
 
 | Keyword | Notes |
 |---------|-------|
@@ -274,7 +288,7 @@ The full keyword surface for state checks:
 | `When I wait for idle` | Network idle (sparingly — observation gates preferred) |
 | `When I take screenshot` | Optional: `filename=<path>` — auto-fires on rule failure if `on_failure` hook installed |
 
-### 4.9 Passthrough (escape hatches)
+### 4.10 Passthrough (escape hatches)
 
 | Keyword | Notes |
 |---------|-------|

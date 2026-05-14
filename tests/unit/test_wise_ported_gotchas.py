@@ -1,13 +1,14 @@
 """Regression tests for WISE-ported gotcha-fixes.
 
-The aitester-bdd walker was deliberately rebuilt as a port of the WISE
+The aitester-bdd walker was deliberately built as a port of the WISE
 engine (not a clean-room reimplementation). These tests pin the behaviors
 that WISE accumulated across many real sites, so they don't silently
 regress.
 
-Each test names the WISE behavior it pins; if a test fails, check the
-corresponding section of the WISE source (vendored at
-src/aitester_bdd/engine/_wise_source.py) before "fixing" by deletion.
+Each test names the WISE behavior it pins. If a test fails, look at the
+named behavior + the relevant function in engine/walk.py or
+engine/browser.py before "fixing" by deletion — the deletion is almost
+certainly removing a battle-tested gotcha-fix.
 """
 from __future__ import annotations
 
