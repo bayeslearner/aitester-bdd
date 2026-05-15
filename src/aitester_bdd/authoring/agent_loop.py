@@ -321,9 +321,20 @@ def _invoke_with_debug_stream(agent, user_message: str, config: dict) -> dict:
     `result["messages"]`.
     """
     import sys
+    import time
 
-    print("[author/debug] streaming agent loop to stderr", file=sys.stderr)
-    print("[author/debug] " + "─" * 60, file=sys.stderr)
+    t0 = time.monotonic()
+
+    def _ts() -> str:
+        elapsed = time.monotonic() - t0
+        wall = time.strftime("%H:%M:%S", time.localtime())
+        return f"{wall} +{elapsed:6.1f}s"
+
+    def _log(line: str) -> None:
+        print(f"[{_ts()}] {line}", file=sys.stderr, flush=True)
+
+    _log("[author/debug] streaming agent loop to stderr")
+    _log("[author/debug] " + "─" * 60)
 
     final_state: dict = {}
     step = 0
@@ -346,13 +357,13 @@ def _invoke_with_debug_stream(agent, user_message: str, config: dict) -> dict:
             if kind in ("HumanMessage", "SystemMessage"):
                 # User/system prompts — log once, briefly.
                 txt = _short(getattr(m, "content", ""), 200)
-                print(f"[author/debug] {kind}: {txt}", file=sys.stderr)
+                _log(f"[author/debug] {kind}: {txt}")
                 continue
             step += 1
             if kind == "AIMessage":
                 content = getattr(m, "content", "") or ""
                 if content:
-                    print(f"[author/debug] step {step} AI: {_short(content, 200)}", file=sys.stderr)
+                    _log(f"[author/debug] step {step} AI: {_short(content, 200)}")
                 for tc in (getattr(m, "tool_calls", None) or []):
                     name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "?")
                     args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
@@ -360,23 +371,17 @@ def _invoke_with_debug_stream(agent, user_message: str, config: dict) -> dict:
                     arg_preview = ", ".join(
                         f"{k}={_short(v, 60)!r}" for k, v in list((args or {}).items())[:3]
                     )
-                    print(
-                        f"[author/debug] step {step}   ↪ {name}({arg_preview})",
-                        file=sys.stderr,
-                    )
+                    _log(f"[author/debug] step {step}   ↪ {name}({arg_preview})")
             elif kind == "ToolMessage":
                 tname = getattr(m, "name", "?")
                 content = _short(getattr(m, "content", ""), 200)
-                print(
-                    f"[author/debug] step {step}   ← {tname}: {content}",
-                    file=sys.stderr,
-                )
+                _log(f"[author/debug] step {step}   ← {tname}: {content}")
             else:
                 content = _short(getattr(m, "content", ""), 120)
-                print(f"[author/debug] step {step} {kind}: {content}", file=sys.stderr)
+                _log(f"[author/debug] step {step} {kind}: {content}")
 
-    print("[author/debug] " + "─" * 60, file=sys.stderr)
-    print(f"[author/debug] loop done in {step} steps", file=sys.stderr)
+    _log("[author/debug] " + "─" * 60)
+    _log(f"[author/debug] loop done in {step} steps")
     return final_state
 
 
