@@ -1972,6 +1972,71 @@ class AITester:
             )
 
     # ------------------------------------------------------------------
+    # Unified LLM invoke (spec 36 M2)
+    # ------------------------------------------------------------------
+
+    @keyword("I ask LLM")
+    def i_ask_llm(self, prompt: str, *args: str) -> str:
+        """Unified LLM primitive — validate, extract, or transform.
+
+        Single synchronous LLM call with current page context auto-injected.
+        Returns the LLM's response as a string.
+
+        When used as an assertion (Then I ask LLM "Is X true?"), a response
+        starting with "no"/"false"/"fail" raises AssertionError → RF FAIL.
+
+        When used with assignment (${var}= I ask LLM "..."), returns the
+        raw response for use in subsequent steps.
+
+        The existing `semantically matches` keywords remain as convenience
+        grammar; they are now conceptually sugar over this primitive.
+        """
+        import subprocess
+        import shutil
+
+        opts = _parse_options(args)
+
+        # Get current page state via agent-browser snapshot
+        page_context = ""
+        ab_bin = shutil.which("agent-browser")
+        if ab_bin:
+            try:
+                proc = subprocess.run(
+                    [ab_bin, "snapshot", "-c", "-i"],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if proc.returncode == 0:
+                    page_context = proc.stdout.strip()
+            except Exception:
+                pass
+        if not page_context:
+            try:
+                proc = subprocess.run(
+                    [ab_bin, "eval", "document.body.innerText"],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if proc.returncode == 0:
+                    page_context = proc.stdout.strip()
+            except Exception:
+                page_context = "(page context unavailable)"
+
+        # Make the LLM call
+        from aitester_bdd.llm.aiagent_adapter import AIAgentLLM
+        llm = AIAgentLLM()
+        response = llm.ask(prompt=_strip_quotes(prompt), page_context=page_context)
+
+        # Log the response
+        logger.info(f"[ask LLM] prompt: {prompt}\n[ask LLM] response: {response}")
+
+        # If this looks like an assertion context, interpret yes/no
+        # (RF keyword prefixed with Then/And in assertion position)
+        lower = response.lower().strip()
+        if lower.startswith(("no", "false", "fail")):
+            raise AssertionError(f"[ask LLM] FAIL — {response}")
+
+        return response
+
+    # ------------------------------------------------------------------
     # Internal access
     # ------------------------------------------------------------------
 

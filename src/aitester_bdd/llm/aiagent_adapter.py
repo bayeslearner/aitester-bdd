@@ -200,6 +200,24 @@ class AIAgentLLM:
     # In-walker escape hatch — keep it small + cheap
     # ------------------------------------------------------------------
 
+    def ask(self, *, prompt: str, page_context: str) -> str:
+        """General-purpose LLM ask with page context. Returns raw response.
+
+        Used by the `I ask LLM` keyword for validate/extract/transform."""
+        system = (
+            "You are aitester-bdd's in-walker assistant. You receive a question "
+            "and the current page state. Answer concisely and precisely based on "
+            "what you can see in the page context. For yes/no questions, start "
+            "your answer with 'yes' or 'no'. For extraction questions, return "
+            "only the extracted value. For generation questions, return only the "
+            "generated content. No commentary, no markdown fences."
+        )
+        user = (
+            f"# Page context\n```\n{page_context[:8000]}\n```\n\n"
+            f"# Question\n{prompt}"
+        )
+        return self._chat(system, user, max_tokens=1024).strip()
+
     def judge(self, *, criterion: str, observation: str) -> bool:
         """Text-based semantic judge. Returns True if the observation
         satisfies the criterion. Used by the `semantic` StateCheck."""
