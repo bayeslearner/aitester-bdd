@@ -589,14 +589,24 @@ class AITester:
         sc.rules[rname] = Rule(name=rname)
         sc.current_rule = rname
 
-    @keyword("And I declare parents \"${names}\"")
-    def declare_parents(self, names: str) -> None:
-        """Declare comma-separated parent rule names for the current rule."""
+    def _declare_parents(self, names: str) -> None:
         rule = self._current_rule()
         for p in _strip_quotes(names).split(","):
             p = p.strip()
             if p:
                 rule.parents.append(p)
+
+    @keyword("And I declare parents \"${names}\"")
+    def and_declare_parents(self, names: str) -> None:
+        """Declare comma-separated parent rule names for the current rule."""
+        self._declare_parents(names)
+
+    # Variadic — handles multi-space cells when the agent writes
+    # `And I declare parents    foo,bar` instead of with quotes.
+    @keyword("And I declare parents")
+    def and_declare_parents_variadic(self, *args: str) -> None:
+        if not args: return
+        self._declare_parents(" ".join(args))
 
     # ------------------------------------------------------------------
     # Per-rule policy (ported from WISE — retry, timeout, interrupt scope)
@@ -752,6 +762,17 @@ class AITester:
 
     @keyword("Then selector \"${css}\" exists")
     def then_selector_exists(self, css: str) -> None:
+        self._current_rule().items.append(StateCheck("selector_exists", locator=_strip_quotes(css)))
+
+    # `locator` is a common agent typo for `selector` here — same intent.
+    @keyword("Given locator \"${css}\" exists")
+    def given_locator_exists(self, css: str) -> None:
+        self._current_rule().items.append(StateCheck("selector_exists", locator=_strip_quotes(css)))
+    @keyword("And locator \"${css}\" exists")
+    def and_locator_exists(self, css: str) -> None:
+        self._current_rule().items.append(StateCheck("selector_exists", locator=_strip_quotes(css)))
+    @keyword("Then locator \"${css}\" exists")
+    def then_locator_exists(self, css: str) -> None:
         self._current_rule().items.append(StateCheck("selector_exists", locator=_strip_quotes(css)))
 
     def _selector_does_not_exist(self, css: str) -> None:
@@ -985,6 +1006,12 @@ class AITester:
     def and_input_value(self, css: str, value: str) -> None: self._input_value(css, value)
     @keyword("Then input \"${css}\" has value \"${value}\"")
     def then_input_value(self, css: str, value: str) -> None: self._input_value(css, value)
+    # Empty-value variants — Robot embedded-args don't bind ${value} to empty
+    # and ${css} captures greedily — use a non-greedy regex constraint.
+    @keyword("Then input \"${css:[^\"]+}\" has value \"\"")
+    def then_input_empty(self, css: str) -> None: self._input_value(css, "")
+    @keyword("And input \"${css:[^\"]+}\" has value \"\"")
+    def and_input_empty(self, css: str) -> None: self._input_value(css, "")
 
     def _select_selected(self, css: str, value: str) -> None:
         self._current_rule().items.append(StateCheck("select_selected", locator=_strip_quotes(css), expected=_strip_quotes(value)))
@@ -1071,6 +1098,33 @@ class AITester:
     @keyword("Then page semantically matches \"${prompt}\"")
     def then_semantic_page(self, prompt: str) -> None: self._semantic_page(prompt)
 
+    # `Then page contains text "X"` — common agent shorthand for
+    # `Then locator "body" contains "X"`. Map directly.
+    def _page_contains_text(self, text: str) -> None:
+        self._current_rule().items.append(
+            StateCheck("contains", locator="body", expected=_strip_quotes(text))
+        )
+    def _page_not_contains_text(self, text: str) -> None:
+        self._current_rule().items.append(
+            StateCheck("not_contains", locator="body", expected=_strip_quotes(text))
+        )
+
+    @keyword("Given page contains text \"${text}\"")
+    def given_page_contains(self, text: str) -> None: self._page_contains_text(text)
+    @keyword("And page contains text \"${text}\"")
+    def and_page_contains(self, text: str) -> None: self._page_contains_text(text)
+    @keyword("Then page contains text \"${text}\"")
+    def then_page_contains(self, text: str) -> None: self._page_contains_text(text)
+    @keyword("But page contains text \"${text}\"")
+    def but_page_contains(self, text: str) -> None: self._page_contains_text(text)
+
+    @keyword("Then page does not contain text \"${text}\"")
+    def then_page_not_contains(self, text: str) -> None: self._page_not_contains_text(text)
+    @keyword("But page does not contain text \"${text}\"")
+    def but_page_not_contains(self, text: str) -> None: self._page_not_contains_text(text)
+    @keyword("And page does not contain text \"${text}\"")
+    def and_page_not_contains(self, text: str) -> None: self._page_not_contains_text(text)
+
     @keyword("Then screenshot semantically matches \"${prompt}\"")
     def then_visual_semantic(self, prompt: str) -> None:
         """Take a screenshot and ask the LLM if it satisfies the criterion.
@@ -1088,6 +1142,19 @@ class AITester:
     # baseline, bug-repro instrumentation). See SKILL § "Emit" for the
     # decision tree.
     # ------------------------------------------------------------------
+
+    def _emit(self, name: str, specs) -> None:
+        self._current_rule().items.append(
+            Emit(name=_strip_quotes(name), fields=_parse_emit_fields(specs))
+        )
+
+    @keyword("Then I emit \"${name}\"")
+    def then_emit(self, name: str, *specs: str) -> None:
+        self._emit(name, specs)
+
+    @keyword("When I emit \"${name}\"")
+    def when_emit(self, name: str, *specs: str) -> None:
+        self._emit(name, specs)
 
     @keyword("And I emit \"${name}\"")
     def and_emit(self, name: str, *specs: str) -> None:
@@ -1525,6 +1592,14 @@ class AITester:
     def and_type(self, value: str, css: str, *opts: str) -> None:
         self._action_type(value, css, *opts)
 
+    # Empty-value variants — Robot embedded-arg `${value}` doesn't bind ""
+    @keyword("When I type \"\" into locator \"${css:[^\"]+}\"")
+    def when_type_empty(self, css: str, *opts: str) -> None:
+        self._action_type("", css, *opts)
+    @keyword("And I type \"\" into locator \"${css:[^\"]+}\"")
+    def and_type_empty(self, css: str, *opts: str) -> None:
+        self._action_type("", css, *opts)
+
     # Natural alias the LLM tends to produce — same action.
     @keyword("When I fill locator \"${css}\" with \"${value}\"")
     def when_fill_locator(self, css: str, value: str, *opts: str) -> None:
@@ -1722,6 +1797,16 @@ class AITester:
     def and_last_shell_exit(self, code: str) -> None: self._last_shell_exit(code)
     @keyword("Then last shell exit equals ${code}")
     def then_last_shell_exit(self, code: str) -> None: self._last_shell_exit(code)
+
+    def _last_shell_stdout_matches(self, regex: str) -> None:
+        self._current_rule().items.append(StateCheck("last_shell_stdout_matches", expected=_strip_quotes(regex)))
+
+    @keyword("Given last shell stdout matches \"${regex}\"")
+    def given_last_shell_stdout_matches(self, regex: str) -> None: self._last_shell_stdout_matches(regex)
+    @keyword("And last shell stdout matches \"${regex}\"")
+    def and_last_shell_stdout_matches(self, regex: str) -> None: self._last_shell_stdout_matches(regex)
+    @keyword("Then last shell stdout matches \"${regex}\"")
+    def then_last_shell_stdout_matches(self, regex: str) -> None: self._last_shell_stdout_matches(regex)
 
     def _last_shell_stdout_contains(self, text: str) -> None:
         self._current_rule().items.append(StateCheck("last_shell_stdout_contains", expected=_strip_quotes(text)))

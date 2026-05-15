@@ -262,6 +262,9 @@ def _eval_state_check(
     if kind == "last_shell_stdout_contains":
         obs = getattr(browser, "_last_shell_stdout", "")
         return (expected in obs, f"stdout contains {expected!r}", obs[:200])
+    if kind == "last_shell_stdout_matches":
+        obs = getattr(browser, "_last_shell_stdout", "")
+        return (bool(re.search(expected, obs)), f"stdout matches {expected!r}", obs[:200])
     if kind == "last_shell_stderr_contains":
         obs = getattr(browser, "_last_shell_stderr", "")
         return (expected in obs, f"stderr contains {expected!r}", obs[:200])
