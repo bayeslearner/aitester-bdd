@@ -888,7 +888,8 @@ def _walk_rule(
     if not ok:
         if rule.options.get("on_fail") == "screenshot":
             try:
-                browser.screenshot(f"on_fail_{rule.name}_guard.png")
+                from aitester_bdd.engine.emit import _output_dir
+                browser.screenshot(str(_output_dir() / f"on_fail_{rule.name}_guard.png"))
             except Exception:
                 pass
         if rule.guard_policy == "abort":
@@ -927,7 +928,9 @@ def _walk_rule(
         shot = None
         if rule.options.get("on_fail") == "screenshot" or fk in ("action", "observation_or_assertion"):
             try:
-                shot = browser.screenshot(f"fail_{scenario.name}_{rule.name}_{fk}.png")
+                from aitester_bdd.engine.emit import _output_dir
+                shot_path = _output_dir() / f"fail_{scenario.name}_{rule.name}_{fk}.png"
+                shot = browser.screenshot(str(shot_path))
             except Exception:
                 pass
         repr_str = ""
