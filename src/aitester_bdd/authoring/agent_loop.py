@@ -112,6 +112,41 @@ def load_skill() -> str:
     return pkg.read_text(encoding="utf-8")
 
 
+def build_system_prompt(mode: str, *, pinning: str = "auto") -> str:
+    """Assemble the system prompt for the given mode.
+
+    Modes: 'author' (default CLI), 'explore' (fluid test), 'explore_and_author'.
+    The base skill (SKILL.md) is shared; each mode gets a preamble that overrides
+    the termination conditions and output expectations.
+    """
+    if mode == "explore":
+        return _EXPLORE_SYSTEM_PROMPT
+
+    base_skill = load_skill()
+
+    if mode == "explore_and_author":
+        pinning_guidance = {
+            "aggressive": "Pin EVERY step to CSS selectors. Emit I define rule blocks. Use I explore only if a stable selector truly cannot be determined.",
+            "conservative": "Pin only login, navigation, and page chrome. Keep interactions and assertions as I explore calls.",
+            "none": "Emit ONLY I explore calls capturing the journey structure. No CSS selectors, no I define rule blocks.",
+            "auto": "Pin what is structural (login, forms, buttons with data-testid). Keep fluid what is data-dependent (which record, dynamic content, verification of state).",
+        }.get(pinning, "")
+
+        preamble = (
+            f"MODE: EXPLORE AND AUTHOR (pinning={pinning})\n\n"
+            f"You are both TESTING (completing the journey) and AUTHORING (writing a .robot file).\n"
+            f"Complete the journey first. Then write the suite.\n\n"
+            f"PINNING RULE: {pinning_guidance}\n\n"
+            f"The authored .robot CAN contain I explore calls — this is new.\n"
+            f"Mixed output (some I define rule blocks + some I explore calls) is valid.\n\n"
+            f"---\n\n"
+        )
+        return preamble + base_skill
+
+    # Default: pure author mode (CLI aitester author)
+    return base_skill
+
+
 def _build_llm():
     """Construct the ChatOpenAI client.
 
@@ -173,6 +208,8 @@ def author_with_agent(
     bug_report_dir: Path,
     source_root: Optional[Path] = None,
     engine: str = "agent-browser",
+    mode: str = "author",
+    pinning: str = "auto",
     max_iters: int = DEFAULT_MAX_ITERS,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     debug: bool = False,
@@ -202,6 +239,8 @@ def author_with_agent(
             bug_report_dir=bug_report_dir,
             source_root=source_root,
             engine=engine,
+            mode=mode,
+            pinning=pinning,
             max_iters=max_iters,
             debug=debug,
         )
@@ -219,6 +258,8 @@ def _author_once(
     bug_report_dir: Path,
     source_root: Optional[Path] = None,
     engine: str = "agent-browser",
+    mode: str = "author",
+    pinning: str = "auto",
     max_iters: int = DEFAULT_MAX_ITERS,
     debug: bool = False,
 ) -> AuthoringResult:
@@ -243,7 +284,7 @@ def _author_once(
 
     llm = _build_llm()
     tools = build_tools(source_root=source_root)
-    system_prompt = load_skill()
+    system_prompt = build_system_prompt(mode, pinning=pinning)
 
     # LocalShellBackend gives the agent an `execute` tool for shell
     # commands (mirrors wise-rpa-bdd). The agent calls `agent-browser

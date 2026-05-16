@@ -1935,20 +1935,7 @@ class AITester:
         if not base_url:
             base_url = "http://localhost:5173"
 
-        pinning_instruction = ""
-        if pinning == "aggressive":
-            pinning_instruction = "Pin EVERY step to CSS selectors. Emit I define rule blocks. Use I explore only if a stable selector truly cannot be determined."
-        elif pinning == "conservative":
-            pinning_instruction = "Pin only login, navigation, and page chrome. Keep interactions and assertions as I explore calls."
-        elif pinning == "none":
-            pinning_instruction = "Emit ONLY I explore calls capturing the journey structure. No CSS selectors, no I define rule blocks."
-        else:
-            pinning_instruction = "Pin what is structural (login, forms, buttons with data-testid). Keep fluid what is data-dependent (which record, dynamic content, verification of state)."
-
-        full_story = (
-            f"{_strip_quotes(story)}\n\n"
-            f"[PINNING={pinning}] {pinning_instruction}"
-        )
+        full_story = _strip_quotes(story)
 
         suite_path = Path(output)
         triage_dir = suite_path.parent / "triage"
@@ -1958,6 +1945,8 @@ class AITester:
             base_url=base_url,
             suite_path=suite_path,
             bug_report_dir=triage_dir,
+            mode="explore_and_author",
+            pinning=pinning,
             debug=True,
         )
 
