@@ -57,6 +57,7 @@ class StateCheck:
     #   Network            : last_status | last_body_contains
     #   Backend (live API) : api_returns
     #   Semantic (AI)      : semantic
+    #   LLM response       : llm_response_contains | llm_response_semantic
     locator: str = ""           # CSS selector for element-scoped checks (empty for url_*, last_*, api_*)
     expected: str = ""          # the expected value / pattern / count / status
     extra: dict[str, Any] = field(default_factory=dict)  # e.g., {"attr": "data-state"}
@@ -69,7 +70,7 @@ class Action:
     kind: str  # open | reload | back | click | click_text | dblclick |
                # type | type_secret | select | check | uncheck | hover | focus |
                # press | upload | scroll | wait_idle | screenshot |
-               # js | call_keyword | browser_step
+               # js | call_keyword | browser_step | llm_ask
     target: str = ""
     value: str = ""
     options: dict[str, Any] = field(default_factory=dict)
@@ -1961,15 +1962,36 @@ class AITester:
         sc.current_rule = rule_name
 
     # ------------------------------------------------------------------
-    # LLM validation — use the existing `semantically matches` keywords
+    # LLM ask — plan-phase action + response checks
     # ------------------------------------------------------------------
-    # `I ask LLM` was removed in the walker refactor. LLM validation is
-    # already handled by the `semantically matches` StateCheck family
-    # (executed by the walker during finalize, with access to the live
-    # browser). LLM extraction belongs in the capture pipeline (future).
-    #
-    # For validate: Then page semantically matches "..."
-    # For scoped:   Then locator "css" semantically matches "..."
+
+    def _llm_ask(self, prompt: str) -> None:
+        self._current_rule().items.append(Action("llm_ask", value=_strip_quotes(prompt)))
+
+    @keyword("When I ask LLM \"${prompt}\"")
+    def when_ask_llm(self, prompt: str) -> None: self._llm_ask(prompt)
+    @keyword("And I ask LLM \"${prompt}\"")
+    def and_ask_llm(self, prompt: str) -> None: self._llm_ask(prompt)
+
+    def _llm_response_contains(self, text: str) -> None:
+        self._current_rule().items.append(StateCheck("llm_response_contains", expected=_strip_quotes(text)))
+
+    @keyword("Given last LLM response contains \"${text}\"")
+    def given_llm_contains(self, text: str) -> None: self._llm_response_contains(text)
+    @keyword("And last LLM response contains \"${text}\"")
+    def and_llm_contains(self, text: str) -> None: self._llm_response_contains(text)
+    @keyword("Then last LLM response contains \"${text}\"")
+    def then_llm_contains(self, text: str) -> None: self._llm_response_contains(text)
+
+    def _llm_response_semantic(self, criterion: str) -> None:
+        self._current_rule().items.append(StateCheck("llm_response_semantic", expected=_strip_quotes(criterion)))
+
+    @keyword("Given last LLM response semantically matches \"${criterion}\"")
+    def given_llm_semantic(self, criterion: str) -> None: self._llm_response_semantic(criterion)
+    @keyword("And last LLM response semantically matches \"${criterion}\"")
+    def and_llm_semantic(self, criterion: str) -> None: self._llm_response_semantic(criterion)
+    @keyword("Then last LLM response semantically matches \"${criterion}\"")
+    def then_llm_semantic(self, criterion: str) -> None: self._llm_response_semantic(criterion)
 
     # ------------------------------------------------------------------
     # Internal access

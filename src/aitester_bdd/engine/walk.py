@@ -279,6 +279,20 @@ def _eval_state_check(
     if kind == "visual_semantic":
         return _eval_visual_semantic(browser, sc)
 
+    # ── LLM response checks (from I ask LLM action)
+    if kind == "llm_response_contains":
+        response = getattr(browser, "_last_llm_response", "")
+        expected = sc.expected
+        passed = expected.lower() in response.lower()
+        return (passed, f"llm_response_contains({expected!r})", response[:200])
+    if kind == "llm_response_semantic":
+        response = getattr(browser, "_last_llm_response", "")
+        llm = _get_llm()
+        if llm:
+            passed = llm.judge(criterion=sc.expected, observation=response)
+            return (passed, f"llm_response_semantic({sc.expected!r})", "PASS" if passed else "FAIL")
+        return (False, f"llm_response_semantic({sc.expected!r})", "LLM not configured")
+
     return (False, f"unknown state check {kind}", "")
 
 
@@ -491,9 +505,6 @@ def _eval_action(browser: BrowserAdapter, action: "Action", *, scope: str = "") 
     elif kind == "call_keyword":
         browser.call_keyword(action.target, action.options.get("args", []))
     elif kind == "shell":
-        # Run a shell command; record exit code + stdout for downstream
-        # `last shell exit equals N` / `last shell stdout contains "X"`
-        # state checks. Captures up to 100KB stdout/stderr.
         import subprocess as _sp
         cmd = action.target or ""
         timeout_s = int((action.options or {}).get("timeout_ms", "60000")) / 1000.0
@@ -506,6 +517,16 @@ def _eval_action(browser: BrowserAdapter, action: "Action", *, scope: str = "") 
             browser._last_shell_exit = -1
             browser._last_shell_stdout = ""
             browser._last_shell_stderr = f"timed out after {timeout_s}s"
+    elif kind == "llm_ask":
+        prompt = action.value or ""
+        url = browser.url()
+        page_text = browser.get_text("body")
+        page_context = f"URL: {url}\n---\n{page_text[:8000]}"
+        llm = _get_llm()
+        if llm:
+            browser._last_llm_response = llm.ask(prompt=prompt, page_context=page_context)
+        else:
+            browser._last_llm_response = "(LLM not configured)"
     else:
         log.warning("unknown action %s", kind)
 
