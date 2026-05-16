@@ -2029,10 +2029,13 @@ class AITester:
         # Log the response
         logger.info(f"[ask LLM] prompt: {prompt}\n[ask LLM] response: {response}")
 
-        # If this looks like an assertion context, interpret yes/no
-        # (RF keyword prefixed with Then/And in assertion position)
+        # Interpret pass/fail only when the response is a clear negative
+        # verdict — exactly "no", "false", "fail" (with optional punctuation).
+        # Longer responses like "None found" or "Not applicable" are valid
+        # extraction results, not assertion failures.
+        import re
         lower = response.lower().strip()
-        if lower.startswith(("no", "false", "fail")):
+        if re.match(r"^(no|false|fail)[.!,;:]*$", lower):
             raise AssertionError(f"[ask LLM] FAIL — {response}")
 
         return response
