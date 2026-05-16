@@ -1894,6 +1894,7 @@ class AITester:
         if result.passed:
             if emit_notes and result.notes:
                 logger.info(f"[explore] PASS — journey notes:\n{result.notes}", html=True)
+            self._last_explore_notes = result.notes
             return result.notes
         else:
             raise AssertionError(
@@ -1996,7 +1997,8 @@ class AITester:
 
         opts = _parse_options(args)
 
-        # Get current page state via agent-browser snapshot
+        # Get current page state — try live browser first, fall back to
+        # the last explore's journey notes (which describe what was on screen).
         page_context = ""
         ab_bin = shutil.which("agent-browser")
         if ab_bin:
@@ -2005,20 +2007,14 @@ class AITester:
                     [ab_bin, "snapshot", "-c", "-i"],
                     capture_output=True, text=True, timeout=15,
                 )
-                if proc.returncode == 0:
+                if proc.returncode == 0 and proc.stdout.strip():
                     page_context = proc.stdout.strip()
             except Exception:
                 pass
+        if not page_context and hasattr(self, "_last_explore_notes") and self._last_explore_notes:
+            page_context = f"(From last explore journey notes):\n{self._last_explore_notes}"
         if not page_context:
-            try:
-                proc = subprocess.run(
-                    [ab_bin, "eval", "document.body.innerText"],
-                    capture_output=True, text=True, timeout=15,
-                )
-                if proc.returncode == 0:
-                    page_context = proc.stdout.strip()
-            except Exception:
-                page_context = "(page context unavailable)"
+            page_context = "(no page context available — no browser session and no prior explore)"
 
         # Make the LLM call
         from aitester_bdd.llm.aiagent_adapter import AIAgentLLM
