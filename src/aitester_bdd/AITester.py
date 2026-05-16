@@ -1961,68 +1961,15 @@ class AITester:
         sc.current_rule = rule_name
 
     # ------------------------------------------------------------------
-    # Unified LLM invoke (spec 36 M2)
+    # LLM validation — use the existing `semantically matches` keywords
     # ------------------------------------------------------------------
-
-    @keyword("I ask LLM")
-    def i_ask_llm(self, prompt: str, *args: str) -> str:
-        """Unified LLM primitive — validate, extract, or transform.
-
-        Single synchronous LLM call with current page context auto-injected.
-        Returns the LLM's response as a string.
-
-        When used as an assertion (Then I ask LLM "Is X true?"), a response
-        starting with "no"/"false"/"fail" raises AssertionError → RF FAIL.
-
-        When used with assignment (${var}= I ask LLM "..."), returns the
-        raw response for use in subsequent steps.
-
-        The existing `semantically matches` keywords remain as convenience
-        grammar; they are now conceptually sugar over this primitive.
-        """
-        import subprocess
-        import shutil
-
-        opts = _parse_options(args)
-
-        # Get current page state from the live browser.
-        # Use the explore session if available, otherwise default session.
-        page_context = ""
-        ab_bin = shutil.which("agent-browser")
-        if ab_bin:
-            cmd = [ab_bin, "snapshot", "-c", "-i"]
-            session = getattr(self, "_explore_session_id", None)
-            if session:
-                cmd = [ab_bin, "--session", session, "snapshot", "-c", "-i"]
-            try:
-                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-                if proc.returncode == 0 and proc.stdout.strip():
-                    page_context = proc.stdout.strip()
-            except Exception:
-                pass
-        if not page_context and hasattr(self, "_last_explore_notes") and self._last_explore_notes:
-            page_context = f"(From last explore journey notes):\n{self._last_explore_notes}"
-        if not page_context:
-            page_context = "(no page context available)"
-
-        # Make the LLM call
-        from aitester_bdd.llm.aiagent_adapter import AIAgentLLM
-        llm = AIAgentLLM()
-        response = llm.ask(prompt=_strip_quotes(prompt), page_context=page_context)
-
-        # Log the response
-        logger.info(f"[ask LLM] prompt: {prompt}\n[ask LLM] response: {response}")
-
-        # Interpret pass/fail only when the response is a clear negative
-        # verdict — exactly "no", "false", "fail" (with optional punctuation).
-        # Longer responses like "None found" or "Not applicable" are valid
-        # extraction results, not assertion failures.
-        import re
-        lower = response.lower().strip()
-        if re.match(r"^(no|false|fail)[.!,;:]*$", lower):
-            raise AssertionError(f"[ask LLM] FAIL — {response}")
-
-        return response
+    # `I ask LLM` was removed in the walker refactor. LLM validation is
+    # already handled by the `semantically matches` StateCheck family
+    # (executed by the walker during finalize, with access to the live
+    # browser). LLM extraction belongs in the capture pipeline (future).
+    #
+    # For validate: Then page semantically matches "..."
+    # For scoped:   Then locator "css" semantically matches "..."
 
     # ------------------------------------------------------------------
     # Internal access
