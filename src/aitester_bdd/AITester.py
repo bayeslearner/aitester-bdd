@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from robot.api import logger
 from robot.api.deco import keyword, library
@@ -192,9 +192,9 @@ class QualityGate:
     `max_failed_pct` — across an expansion run, max % of failed iterations
     """
 
-    min_records: Optional[int] = None
+    min_records: int | None = None
     filled_pcts: dict[str, float] = field(default_factory=dict)
-    max_failed_pct: Optional[float] = None
+    max_failed_pct: float | None = None
 
 
 @dataclass
@@ -275,7 +275,7 @@ class ExecutionContext:
     session_id: str = ""
     scope: str = ""
     walked_rules: set = field(default_factory=set)
-    deadline: Optional[float] = None
+    deadline: float | None = None
     # Browser and aspects are set by the walker at walk time, not at plan time.
     # Typed as Any here to avoid circular imports with engine modules.
     browser: Any = None
@@ -319,17 +319,17 @@ class Rule:
     retry_max: int = 0
     retry_delay_ms: int = 1000
     interrupt_paused: bool = False
-    interrupt_override: Optional[list[str]] = None  # None = inherit verification's list
+    interrupt_override: list[str] | None = None  # None = inherit verification's list
     guard_policy: str = "skip"
     options: dict[str, str] = field(default_factory=dict)
     # Capture pipeline (TIER 1 — artifact model)
     field_specs: list[FieldSpec] = field(default_factory=list)
-    table_spec: Optional[TableSpec] = None
+    table_spec: TableSpec | None = None
     emit_targets: list[str] = field(default_factory=list)
     emit_flatten_by: dict[str, str] = field(default_factory=dict)
     emit_merge_on: dict[str, str] = field(default_factory=dict)
     # Parametric expansion (TIER 2)
-    expansion: Optional[Expansion] = None
+    expansion: Expansion | None = None
     # Scope propagation to children (TIER 2.5).
     # When set, child rules walk with CSS selectors prefixed by this scope.
     # For expansion-elements this is set per-iteration automatically; for
@@ -358,7 +358,7 @@ class Scenario:
     name: str
     entry_url: str = ""
     rules: dict[str, Rule] = field(default_factory=dict)
-    current_rule: Optional[str] = None
+    current_rule: str | None = None
 
 
 @dataclass
@@ -390,8 +390,8 @@ class Verification:
     artifact_store: dict[str, list] = field(default_factory=dict)
     quality_gates: dict[str, QualityGate] = field(default_factory=dict)  # per-artifact
     write_overrides: dict[str, str] = field(default_factory=dict)  # artifact_name -> path
-    current_scenario: Optional[int] = None
-    current_artifact: Optional[str] = None  # most-recently-mentioned artifact (for QG attach)
+    current_scenario: int | None = None
+    current_artifact: str | None = None  # most-recently-mentioned artifact (for QG attach)
 
 
 # ---------------------------------------------------------------------------

@@ -41,13 +41,14 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any
 
 from aitester_bdd.engine.browser import BrowserAdapter
 from aitester_bdd.engine.verdict import RuleResult, Verdict
 
 if TYPE_CHECKING:
     from aitester_bdd.AITester import Action, Rule, Scenario, StateCheck, Verification
+    from aitester_bdd.engine.context import WalkContext
 
 log = logging.getLogger("aitester_bdd.engine.walk")
 
@@ -60,7 +61,7 @@ DEFAULT_RUN_TIMEOUT_S = 300  # global cap — override via AITESTER_RUN_TIMEOUT 
 # Topo sort — Kahn's algorithm, stable (ported from WISE _resolve_node_order)
 # ---------------------------------------------------------------------------
 
-def _topo_sort(rules_by_name: dict[str, "Rule"]) -> list[str]:
+def _topo_sort(rules_by_name: dict[str, Rule]) -> list[str]:
     """Parents-before-children ordering. Unknown parents are placed at their
     cite position and flagged at walk time. Cycles raise ValueError."""
     sorted_names: list[str] = []
@@ -94,7 +95,7 @@ def _topo_sort(rules_by_name: dict[str, "Rule"]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _eval_state_check(
-    browser: BrowserAdapter, sc: "StateCheck", *, timeout_ms: int, scope: str = "",
+    browser: BrowserAdapter, sc: StateCheck, *, timeout_ms: int, scope: str = "",
 ) -> tuple[bool, str, str]:
     """Evaluate one StateCheck. Returns (passed, expected_repr, observed_repr).
 
@@ -333,7 +334,7 @@ def reset_llm_cache() -> None:
     _LLM_CACHE = _UNSET
 
 
-def _eval_semantic(browser: BrowserAdapter, sc: "StateCheck") -> tuple[bool, str, str]:
+def _eval_semantic(browser: BrowserAdapter, sc: StateCheck) -> tuple[bool, str, str]:
     """Text-mode semantic check. Pages text → LLM judge → pass/fail."""
     criterion = sc.expected
     llm = _get_llm()
@@ -365,7 +366,7 @@ def _eval_semantic(browser: BrowserAdapter, sc: "StateCheck") -> tuple[bool, str
 
 
 def _eval_visual_semantic(
-    browser: BrowserAdapter, sc: "StateCheck",
+    browser: BrowserAdapter, sc: StateCheck,
 ) -> tuple[bool, str, str]:
     """Multimodal semantic check: PNG screenshot → LLM judge → pass/fail."""
     criterion = sc.expected
@@ -407,6 +408,7 @@ def _eval_visual_semantic(
 def _eval_api_returns(path: str, field: str, expected: str) -> tuple[bool, str, str]:
     """Direct API check via httpx using token from env."""
     import os
+
     import httpx
 
     base = os.environ.get("AITESTER_API_BASE_URL", "http://localhost:5175")
@@ -427,7 +429,7 @@ def _eval_api_returns(path: str, field: str, expected: str) -> tuple[bool, str, 
 # Actions
 # ---------------------------------------------------------------------------
 
-def _eval_action(browser: BrowserAdapter, action: "Action", *, scope: str = "") -> None:
+def _eval_action(browser: BrowserAdapter, action: Action, *, scope: str = "") -> None:
     """Execute one action against the live browser.
 
     Selector-bearing actions resolve the target through fallback resolution
@@ -531,7 +533,7 @@ def _eval_action(browser: BrowserAdapter, action: "Action", *, scope: str = "") 
         log.warning("unknown action %s", kind)
 
 
-def _await_after_action(browser: BrowserAdapter, action: "Action") -> None:
+def _await_after_action(browser: BrowserAdapter, action: Action) -> None:
     """Honor inline `await=<selector>` option after click/type.
 
     Ported from WISE. After an action, if `await=` is declared, wait for
@@ -549,7 +551,7 @@ def _await_after_action(browser: BrowserAdapter, action: "Action") -> None:
 # ---------------------------------------------------------------------------
 
 def _effective_interrupt_selectors(
-    rule: "Rule", verification: "Verification"
+    rule: Rule, verification: Verification
 ) -> list[str]:
     """Resolve which dismiss-selectors apply to this rule.
 
@@ -585,7 +587,7 @@ def _dismiss_interrupts(browser: BrowserAdapter, selectors: list[str]) -> None:
 # Rule body split — items list → (guards, body)
 # ---------------------------------------------------------------------------
 
-def _split_rule_items(rule: "Rule") -> tuple[list["StateCheck"], list]:
+def _split_rule_items(rule: Rule) -> tuple[list[StateCheck], list]:
     """Split the rule's items into (guards, body).
 
     Guards = StateChecks before the first Action (no Emit, no Action).
@@ -625,13 +627,13 @@ def _split_rule_items(rule: "Rule") -> tuple[list["StateCheck"], list]:
 
 def _check_guards(
     browser: BrowserAdapter,
-    rule: "Rule",
-    verification: "Verification",
-    guards: list["StateCheck"],
+    rule: Rule,
+    verification: Verification,
+    guards: list[StateCheck],
     *,
     registry: Any = None,
     scope: str = "",
-) -> tuple[bool, Optional["StateCheck"], str, str]:
+) -> tuple[bool, StateCheck | None, str, str]:
     """Evaluate all guards. Returns (passed, failed_check_or_None, expected, observed).
 
     Dismisses interrupts once before checking. Each guard uses the short
@@ -674,15 +676,15 @@ def _check_guards(
 
 def _execute_body(
     browser: BrowserAdapter,
-    rule: "Rule",
-    verification: "Verification",
+    rule: Rule,
+    verification: Verification,
     body: list,
     *,
-    deadline: Optional[float] = None,
+    deadline: float | None = None,
     scenario_name: str = "",
     registry: Any = None,
     scope: str = "",
-) -> tuple[bool, str, str, Optional["StateCheck | Action"], str, str]:
+) -> tuple[bool, str, str, StateCheck | Action | None, str, str]:
     """Execute the rule body — actions interleaved with inline state checks.
 
     Returns (passed, failure_step_kind, failure_message, failed_item,
@@ -812,9 +814,9 @@ def _execute_body(
 
 def _walk_explore_rule(
     browser: BrowserAdapter,
-    scenario: "Scenario",
-    rule: "Rule",
-    verification: "Verification",
+    scenario: Scenario,
+    rule: Rule,
+    verification: Verification,
     *,
     start: float,
 ) -> RuleResult:
@@ -826,8 +828,9 @@ def _walk_explore_rule(
     base_url = scenario.entry_url or "http://localhost:5173"
 
     if mode == "explore_and_author":
-        from aitester_bdd.authoring.agent_loop import author_with_agent
         from pathlib import Path
+
+        from aitester_bdd.authoring.agent_loop import author_with_agent
 
         output = opts.get("output", "")
         pinning = opts.get("pinning", "auto")
@@ -873,12 +876,12 @@ def _walk_explore_rule(
 
 def _walk_rule(
     browser: BrowserAdapter,
-    scenario: "Scenario",
-    rule: "Rule",
-    verification: "Verification",
+    scenario: Scenario,
+    rule: Rule,
+    verification: Verification,
     *,
     already_passed: set[str],
-    run_deadline: Optional[float] = None,
+    run_deadline: float | None = None,
     registry: Any = None,
     walk_log: Any = None,
     scope: str = "",
@@ -1400,7 +1403,6 @@ def _run_expansion_combinations(
     each combo before the next combo's actions apply.
     """
     import itertools
-    import json
 
     exp = rule.expansion
     if not exp.axes:
@@ -1423,7 +1425,7 @@ def _run_expansion_combinations(
 
     for combo in itertools.product(*axis_values):
         # Apply each axis action to set this combo
-        for ax, value in zip(exp.axes, combo):
+        for ax, value in zip(exp.axes, combo, strict=True):
             try:
                 _apply_axis_action(browser, ax, value)
             except Exception as exc:
@@ -1446,7 +1448,7 @@ def _run_expansion_combinations(
                       "extracted_at": _now_iso()}
         # Tag combo values on the record for differential debugging
         record.setdefault("data", {})
-        for ax, value in zip(exp.axes, combo):
+        for ax, value in zip(exp.axes, combo, strict=True):
             record["data"][f"_combo_{ax.control}"] = value
 
         record = _invoke_hooks_post_extract(verification, record)
@@ -1507,7 +1509,7 @@ def _apply_axis_action(browser: BrowserAdapter, axis: Any, value: str) -> None:
 
 def _now_iso() -> str:
     import datetime
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -1570,6 +1572,7 @@ def _write_artifacts(verification: Any) -> None:
     """Write each artifact (with `output=True`) to <output_dir>/<name>.jsonl
     at scenario teardown. Honors dedupe."""
     import json
+
     from aitester_bdd.engine.emit import _output_dir
 
     output_dir = _output_dir()
@@ -1612,7 +1615,7 @@ def _write_artifacts(verification: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _run_state_setup(browser: BrowserAdapter, verification: "Verification") -> None:
+def _run_state_setup(browser: BrowserAdapter, verification: Verification) -> None:
     """Execute suite-level state setup (auth, consent) before any scenario.
 
     Ported from WISE _run_setup. If `state_setup.skip_when` is a CSS
@@ -1654,20 +1657,22 @@ def _run_state_setup(browser: BrowserAdapter, verification: "Verification") -> N
     browser.wait_for_load_state("networkidle", timeout="10s")
 
 
-def _build_default_registry(walk_log: Any):
+def _build_default_registry(walk_log: Any, ctx: WalkContext):
     """Wire up the standard aspects: trajectory recording, AI failure
-    diagnosis, slow-action instrumentation. Override by setting
-    AITESTER_DISABLE_ASPECTS=trajectory,diagnose,instrument (csv)."""
-    import os
-    from aitester_bdd.engine.aspects import AspectRegistry
-    from aitester_bdd.engine.walk_log import (
-        make_diagnose_aspect, make_instrument_aspect, make_trajectory_aspect,
-    )
-    from aitester_bdd.engine.emit import _output_dir
+    diagnosis, slow-action instrumentation, step delay.
 
-    disabled = set(
-        a.strip() for a in os.environ.get("AITESTER_DISABLE_ASPECTS", "").split(",") if a.strip()
+    Aspect disabling is controlled by ctx.disabled_aspects (resolved from
+    AITESTER_DISABLE_ASPECTS env var at WalkContext construction time)."""
+    from aitester_bdd.engine.aspects import AspectRegistry
+    from aitester_bdd.engine.emit import _output_dir
+    from aitester_bdd.engine.walk_log import (
+        make_diagnose_aspect,
+        make_instrument_aspect,
+        make_step_delay_aspect,
+        make_trajectory_aspect,
     )
+
+    disabled = ctx.disabled_aspects
     registry = AspectRegistry()
     if "trajectory" not in disabled:
         registry.register(make_trajectory_aspect(walk_log))
@@ -1681,10 +1686,12 @@ def _build_default_registry(walk_log: Any):
                 get_story=lambda v: getattr(v, "story", "") or "",
             )
         )
+    if ctx.step_delay_ms > 0 and "step_delay" not in disabled:
+        registry.register(make_step_delay_aspect(ctx.step_delay_ms))
     return registry
 
 
-def walk_verification(verification: "Verification") -> Verdict:
+def walk_verification(verification: Verification, ctx: WalkContext | None = None) -> Verdict:
     """Walk all scenarios in a Verification; return a Verdict.
 
     Explore rule nodes are handled inline — when the walker reaches an
@@ -1700,22 +1707,25 @@ def walk_verification(verification: "Verification") -> Verdict:
       - instrument: WARNs when a single action exceeds 0.5s
       - diagnose: on every rule failure, asks the LLM "why?" and stores
         the answer on RuleResult.ai_diagnosis + appends failures.jsonl
+      - step_delay: sleeps after each action (when step_delay_ms > 0)
 
     Disable any combination via AITESTER_DISABLE_ASPECTS=trajectory,...
     """
-    import os
+    from aitester_bdd.engine.context import WalkContext
     from aitester_bdd.engine.emit import _output_dir
     from aitester_bdd.engine.walk_log import WalkLog
 
-    run_timeout_s = int(os.environ.get("AITESTER_RUN_TIMEOUT", str(DEFAULT_RUN_TIMEOUT_S)))
-    run_deadline = time.time() + run_timeout_s if run_timeout_s else None
+    if ctx is None:
+        ctx = WalkContext.from_env()
+
+    run_deadline = time.time() + ctx.run_timeout_s if ctx.run_timeout_s else None
 
     walk_log = WalkLog(sink_path=_output_dir() / "walk_log.jsonl")
-    registry = _build_default_registry(walk_log)
+    registry = _build_default_registry(walk_log, ctx)
 
     verdict = Verdict(verification_name=verification.name)
     browser = BrowserAdapter()
-    browser.new_session(headless=True)
+    browser.new_session(headless=not ctx.headed)
     try:
         # Suite-level state setup (auth, consent) — runs once before any
         # scenario. Ported from WISE.

@@ -192,7 +192,7 @@ def test_walker_parent_chain_skips_child_on_parent_failure(monkeypatch):
     t.when_click_locator('"button"')
     t.and_selector_exists('"[data-testid=overview]"')  # observation will fail
     t.define_rule('"approve"')
-    t.declare_parents('"login"')
+    t.and_declare_parents('"login"')
     t.when_click_locator('".approve"')
 
     fake = FakeBrowser(current_url="http://x/", selector_present={})  # nothing exists

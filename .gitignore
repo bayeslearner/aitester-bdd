@@ -63,3 +63,4 @@ debug/
 failures.jsonl
 walk_log.jsonl
 emit.jsonl
+site/

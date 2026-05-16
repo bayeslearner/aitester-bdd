@@ -61,8 +61,9 @@ the testing-specific hooks (`on_rule_failure`, `after_state_check`,
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 log = logging.getLogger("aitester_bdd.engine.aspects")
 
@@ -77,20 +78,20 @@ class Aspect:
 
     name: str
 
-    before_scenario: Optional[Callable[..., bool]] = None
-    after_scenario: Optional[Callable[..., None]] = None
+    before_scenario: Callable[..., bool] | None = None
+    after_scenario: Callable[..., None] | None = None
 
-    before_rule: Optional[Callable[..., bool]] = None
-    after_rule: Optional[Callable[..., None]] = None
+    before_rule: Callable[..., bool] | None = None
+    after_rule: Callable[..., None] | None = None
 
-    before_action: Optional[Callable[..., None]] = None
-    after_action: Optional[Callable[..., None]] = None
+    before_action: Callable[..., None] | None = None
+    after_action: Callable[..., None] | None = None
 
-    after_state_check: Optional[Callable[..., None]] = None
-    after_emit: Optional[Callable[..., None]] = None
-    after_dismiss: Optional[Callable[..., None]] = None
+    after_state_check: Callable[..., None] | None = None
+    after_emit: Callable[..., None] | None = None
+    after_dismiss: Callable[..., None] | None = None
 
-    on_rule_failure: Optional[Callable[..., Optional[str]]] = None
+    on_rule_failure: Callable[..., str | None] | None = None
 
 
 class AspectRegistry:

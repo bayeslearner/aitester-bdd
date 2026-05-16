@@ -26,7 +26,6 @@ import os
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Optional
 
 log = logging.getLogger("aitester_bdd.authoring.agent_loop")
 
@@ -76,8 +75,8 @@ class AuthoringResult:
     tool — treat as a soft failure.
     """
 
-    suite_path: Optional[Path] = None
-    bug_report_path: Optional[Path] = None
+    suite_path: Path | None = None
+    bug_report_path: Path | None = None
     iterations: int = 0
     final_message: str = ""
     transcript: list[dict] = None  # full message list for debugging
@@ -177,15 +176,15 @@ def _build_llm():
     )
 
 
-def _parse_terminal_markers(transcript: list[dict]) -> tuple[Optional[Path], Optional[Path]]:
+def _parse_terminal_markers(transcript: list[dict]) -> tuple[Path | None, Path | None]:
     """Scan tool messages for "AUTHORING_DONE: suite=..." / "...bug_report=...".
 
     The terminal tools (write_robot_suite, report_bug) embed these
     markers in their string return values. We trust whichever fires
     last in the transcript.
     """
-    suite_path: Optional[Path] = None
-    bug_path: Optional[Path] = None
+    suite_path: Path | None = None
+    bug_path: Path | None = None
     for msg in transcript:
         content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
         if not isinstance(content, str):
@@ -206,7 +205,7 @@ def author_with_agent(
     base_url: str,
     suite_path: Path,
     bug_report_dir: Path,
-    source_root: Optional[Path] = None,
+    source_root: Path | None = None,
     engine: str = "agent-browser",
     mode: str = "author",
     pinning: str = "auto",
@@ -219,7 +218,7 @@ def author_with_agent(
     Each retry feeds back a short hint about why the prior attempt failed,
     so the next attempt knows to be more decisive (terminate earlier).
     """
-    last_failure: Optional[str] = None
+    last_failure: str | None = None
     for attempt in range(1, max_attempts + 1):
         suffix = ""
         if last_failure:
@@ -256,7 +255,7 @@ def _author_once(
     base_url: str,
     suite_path: Path,
     bug_report_dir: Path,
-    source_root: Optional[Path] = None,
+    source_root: Path | None = None,
     engine: str = "agent-browser",
     mode: str = "author",
     pinning: str = "auto",
@@ -401,11 +400,11 @@ def explore_with_agent(
     *,
     story: str,
     base_url: str,
-    session: Optional[str] = None,
-    source_root: Optional[Path] = None,
+    session: str | None = None,
+    source_root: Path | None = None,
     max_iters: int = DEFAULT_MAX_ITERS,
     debug: bool = False,
-) -> "ExploreResult":
+) -> ExploreResult:
     """Run the agent loop in explore mode — fluid test, no suite output.
 
     The agent drives the browser through the story.  Completion = PASS
@@ -419,7 +418,9 @@ def explore_with_agent(
     from langgraph.checkpoint.memory import InMemorySaver
 
     from aitester_bdd.authoring.tools import (
-        build_explore_tools, get_explore_result, _reset_explore_state,
+        _reset_explore_state,
+        build_explore_tools,
+        get_explore_result,
         session_id,
     )
 

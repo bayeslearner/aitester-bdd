@@ -28,9 +28,12 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from aitester_bdd.AITester import Emit, EmitField
 
 log = logging.getLogger("aitester_bdd.engine.emit")
 
@@ -87,7 +90,7 @@ def _truncate(value: Any) -> tuple[Any, bool]:
     return value.encode("utf-8")[:limit].decode("utf-8", errors="ignore"), True
 
 
-def capture_field(browser, field: "EmitField") -> Any:
+def capture_field(browser, field: EmitField) -> Any:
     """Run one EmitField against the live browser; return its value.
 
     Returns "" / 0 / False on browser errors rather than raising — emit
@@ -133,10 +136,10 @@ def capture_field(browser, field: "EmitField") -> Any:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def _build_data(browser, fields: list["EmitField"]) -> dict:
+def _build_data(browser, fields: list[EmitField]) -> dict:
     data: dict[str, Any] = {}
     for f in fields:
         v = capture_field(browser, f)
@@ -156,7 +159,7 @@ def _write(record: dict) -> None:
 
 
 def emit_explicit(
-    browser, *, scenario: str, rule: str, emit_obj: "Emit",
+    browser, *, scenario: str, rule: str, emit_obj: Emit,
 ) -> None:
     """Capture the named fields from the live page; append to emit.jsonl."""
     t0 = time.time()
@@ -184,7 +187,8 @@ def emit_on_failure(
     `extra.path` and snapshots their text + count + visibility. Always
     captures URL + last network response shape.
     """
-    from aitester_bdd.AITester import Action, Emit as _Emit, StateCheck
+    from aitester_bdd.AITester import Action, StateCheck
+    from aitester_bdd.AITester import Emit as _Emit
 
     locators: list[str] = []
     seen: set[str] = set()
@@ -266,7 +270,8 @@ def emit_on_failure(
 
 
 def _repr_item(item: Any) -> str:
-    from aitester_bdd.AITester import Action, Emit as _Emit, StateCheck
+    from aitester_bdd.AITester import Action, StateCheck
+    from aitester_bdd.AITester import Emit as _Emit
 
     if isinstance(item, StateCheck):
         return f"StateCheck {item.kind} {item.locator or item.expected!r}"

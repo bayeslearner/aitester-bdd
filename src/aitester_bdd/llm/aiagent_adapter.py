@@ -34,7 +34,6 @@ from __future__ import annotations
 import base64
 import logging
 import os
-from typing import Optional
 
 log = logging.getLogger("aitester_bdd.llm.aiagent")
 
@@ -111,7 +110,7 @@ DEFAULT_BASE_URL = "http://localhost:20128/v1"
 DEFAULT_API_KEY = "placeholder"  # claude-code-proxy ignores the key
 
 
-def _resolve_model(explicit: Optional[str]) -> str:
+def _resolve_model(explicit: str | None) -> str:
     return explicit or os.environ.get("AITESTER_LLM_MODEL", DEFAULT_MODEL)
 
 
@@ -126,7 +125,7 @@ class AIAgentLLM:
     """LiteLLM-backed LLM adapter. Same instance is reused for authoring
     and in-walker judge calls — one credential set, one config."""
 
-    def __init__(self, *, model: Optional[str] = None) -> None:
+    def __init__(self, *, model: str | None = None) -> None:
         self.model = _resolve_model(model)
         _ensure_proxy_env()
 
@@ -187,7 +186,7 @@ class AIAgentLLM:
 
     def ground_selector(
         self, *, target_description: str, snapshot: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         user = (
             f"# Target\n{target_description}\n\n"
             f"# Snapshot\n```\n{snapshot}\n```\n\n"

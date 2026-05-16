@@ -162,7 +162,7 @@ def test_dedupe_drops_repeated_records(monkeypatch, tmp_path):
     t.emit_to_artifact('"cases"')
 
     t.define_rule('"second"')
-    t.declare_parents('"first"')
+    t.and_declare_parents('"first"')
     t.extract_fields("field=id extractor=text locator=#case-id-2")
     t.emit_to_artifact('"cases"')
 
@@ -242,7 +242,7 @@ def test_merge_into_artifact_combines_records_by_key(monkeypatch, tmp_path):
     t.emit_to_artifact('"cases"')
     # Rule B: merge in id + owner, by id key
     t.define_rule('"owner"')
-    t.declare_parents('"basics"')
+    t.and_declare_parents('"basics"')
     t.extract_fields(
         "field=id    extractor=text locator=#cid",
         "field=owner extractor=text locator=.owner",

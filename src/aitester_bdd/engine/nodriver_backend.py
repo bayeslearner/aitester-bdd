@@ -225,7 +225,6 @@ class NodriverBackend:
     ) -> bool:
         want_present = state in ("attached", "visible")
         css = selector.split(" >> ")[0].strip()
-        end = asyncio.get_event_loop_policy().get_event_loop().time() if False else 0
         # Poll get_count() since nodriver's wait_for raises on timeout.
         import time
         deadline = time.time() + (timeout_ms / 1000.0)

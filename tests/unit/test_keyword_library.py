@@ -38,7 +38,7 @@ def test_parent_declaration():
     t.start_scenario_at('"s"', '"http://x"')
     t.define_rule('"a"')
     t.define_rule('"b"')
-    t.declare_parents('"a"')
+    t.and_declare_parents('"a"')
 
     v = t.get_verification()
     assert v.scenarios[0].rules["b"].parents == ["a"]

@@ -77,11 +77,10 @@ class AgentBrowserBackend:
         self._last_response_status: int | None = None
         self._last_response_body: str = ""
         self._opened = False
-        # Isolated session per adapter instance — gives the suite its
-        # own cookie jar so authentication state from prior runs (or
-        # from the authoring session) never leaks into the test.
-        import os, uuid
+        import os
+        import uuid
         self._session = os.environ.get("AITESTER_RUN_SESSION") or f"aitester-run-{uuid.uuid4().hex[:8]}"
+        self._headed = os.environ.get("AITESTER_HEADED", "").strip() in ("1", "true", "yes")
 
     # ------------------------------------------------------------------
     # CLI bridge
@@ -90,7 +89,10 @@ class AgentBrowserBackend:
     def _run(self, *args: str, timeout: int | None = None) -> str:
         """Run an agent-browser subprocess. Returns stdout (stripped) or
         raises RuntimeError on a CLI failure. Empty stdout returns ""."""
-        cmd = ["agent-browser", "--session", self._session, *args]
+        cmd = ["agent-browser", "--session", self._session]
+        if self._headed:
+            cmd.append("--headed")
+        cmd.extend(args)
         try:
             r = subprocess.run(
                 cmd,

@@ -33,9 +33,10 @@ import logging
 import os
 import time
 from collections import deque
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 log = logging.getLogger("aitester_bdd.engine.walk_log")
 
@@ -44,7 +45,7 @@ DEFAULT_MAX_ENTRIES = 2000
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class WalkLog:
@@ -248,6 +249,21 @@ def make_instrument_aspect(slow_threshold_s: float = 0.5):
             )
 
     return Aspect(name="instrument", after_action=after_action)
+
+
+def make_step_delay_aspect(delay_ms: int):
+    """Aspect that sleeps after every action — replaces the inline time.sleep.
+
+    Wired when AITESTER_STEP_DELAY_MS > 0 (or --step-delay CLI flag).
+    Used for headed observation: slows the walk so a human can follow
+    along visually without missing transitions.
+    """
+    from aitester_bdd.engine.aspects import Aspect
+
+    def after_action(rule, action, dt_seconds, raised):
+        time.sleep(delay_ms / 1000.0)
+
+    return Aspect(name="step_delay", after_action=after_action)
 
 
 def make_diagnose_aspect(get_llm: Any, output_dir_fn: Any, get_story: Any | None = None):

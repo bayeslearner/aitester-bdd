@@ -167,12 +167,23 @@ def run(
         None, "--engine", "-e",
         help="Override the suite's declared ${ENGINE}. Default: read from the suite.",
     ),
+    headed: bool = typer.Option(
+        False, "--headed",
+        help="Run with visible browser window (headful mode). Sets AITESTER_HEADED=1.",
+    ),
+    step_delay: int | None = typer.Option(
+        None, "--step-delay",
+        help="Pause N milliseconds after each action (for visual observation). Sets AITESTER_STEP_DELAY_MS.",
+    ),
 ) -> None:
     """Run a .robot suite via Robot Framework (no LLM in the loop).
 
     Reads the suite's `${ENGINE}` declaration and sets AITESTER_BROWSER
     so the walker picks the matching runtime backend. CLI --engine
     overrides the suite. Environment AITESTER_BROWSER overrides both.
+
+    Use --headed to watch the browser execute tests. Combine with
+    --step-delay 500 to slow down execution for visual observation.
     """
     declared = _read_engine_from_suite(suite)
     chosen = engine or declared
@@ -185,6 +196,12 @@ def run(
             typer.echo(f"[run] AITESTER_BROWSER={chosen} (from {src})")
     elif os.environ.get("AITESTER_BROWSER"):
         typer.echo(f"[run] AITESTER_BROWSER={os.environ['AITESTER_BROWSER']} (from env)")
+    if headed:
+        os.environ["AITESTER_HEADED"] = "1"
+        typer.echo("[run] headed mode ON — browser window visible")
+    if step_delay is not None:
+        os.environ["AITESTER_STEP_DELAY_MS"] = str(step_delay)
+        typer.echo(f"[run] step delay {step_delay}ms after each action")
     cmd = [sys.executable, "-m", "robot"]
     if base_url:
         cmd.extend(["--variable", f"BASE_URL:{base_url}"])
@@ -263,6 +280,7 @@ def doctor() -> None:
     # Nodriver backend status
     try:
         import nodriver  # type: ignore[import-not-found]  # noqa: F401
+
         from aitester_bdd.engine.nodriver_backend import _find_browser_binary
         binary = _find_browser_binary()
         if binary:

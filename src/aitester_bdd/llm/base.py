@@ -11,7 +11,7 @@ One adapter (AIAgentLLM, LiteLLM-backed) covers both uses:
 """
 from __future__ import annotations
 
-from typing import Optional, Protocol
+from typing import Protocol
 
 
 class LLMClient(Protocol):
@@ -37,7 +37,7 @@ class LLMClient(Protocol):
 
     def ground_selector(
         self, *, target_description: str, snapshot: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Given a description of a desired element and a current snapshot,
         return the best CSS/aria selector visible in the snapshot, or
         None if no suitable element is present."""

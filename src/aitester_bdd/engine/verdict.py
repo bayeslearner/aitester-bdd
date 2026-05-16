@@ -5,7 +5,6 @@ Per-rule pass/fail with evidence on failure.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 
 @dataclass

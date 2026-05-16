@@ -1,0 +1,66 @@
+site_name: aitester-bdd
+site_description: LLM-driven BDD test authoring for Robot Framework
+site_url: https://kundeng.github.io/aitester-bdd
+repo_url: https://github.com/kundeng/aitester-bdd
+repo_name: kundeng/aitester-bdd
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.expand
+    - toc.follow
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quick Start: getting-started/quickstart.md
+      - Installation: getting-started/installation.md
+  - User Guide:
+      - Writing Suites: guide/writing-suites.md
+      - Rule Composition: guide/rule-composition.md
+      - State Checks: guide/state-checks.md
+      - Actions: guide/actions.md
+      - Configuration: guide/configuration.md
+      - Running Tests: guide/running-tests.md
+  - How It Works:
+      - Architecture Overview: internals/architecture.md
+      - The Plan-Then-Execute Model: internals/plan-then-execute.md
+      - The Walker (MDP Engine): internals/walker.md
+      - Aspects (AOP): internals/aspects.md
+      - Browser Backends: internals/backends.md
+      - Authoring Agent: internals/authoring.md
+  - Reference:
+      - Keyword Library: reference/keywords.md
+      - CLI: reference/cli.md
+      - Environment Variables: reference/env-vars.md
+      - Changelog: changelog.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true

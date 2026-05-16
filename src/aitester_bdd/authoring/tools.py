@@ -16,12 +16,10 @@ from __future__ import annotations
 
 import atexit
 import logging
-import os
 import shutil
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -32,8 +30,8 @@ log = logging.getLogger("aitester_bdd.authoring.tools")
 # ─── agent-browser session ───────────────────────────────────────────────
 
 
-_SESSION_ID: Optional[str] = None
-_AGENT_BROWSER_BIN: Optional[str] = None
+_SESSION_ID: str | None = None
+_AGENT_BROWSER_BIN: str | None = None
 
 
 def _resolve_bin() -> str:
@@ -117,8 +115,8 @@ class JourneyBlockedParams(BaseModel):
     report: str = Field(description="What you tried, what you observed, why the journey could not be completed.")
 
 
-_explore_notes: Optional[str] = None
-_explore_bug: Optional[str] = None
+_explore_notes: str | None = None
+_explore_bug: str | None = None
 
 
 def _reset_explore_state() -> None:
@@ -139,7 +137,7 @@ def _journey_blocked(report: str) -> str:
     return f"EXPLORE_DONE: passed=false\n{report}"
 
 
-def get_explore_result() -> tuple[Optional[str], Optional[str]]:
+def get_explore_result() -> tuple[str | None, str | None]:
     """Read the explore terminal state. Returns (notes, bug_report)."""
     return _explore_notes, _explore_bug
 
@@ -171,7 +169,7 @@ def build_explore_tools() -> list[StructuredTool]:
 # ─── Tool factory ────────────────────────────────────────────────────────
 
 
-def build_tools(*, source_root: Optional[Path] = None) -> list[StructuredTool]:
+def build_tools(*, source_root: Path | None = None) -> list[StructuredTool]:
     """Return the two terminal tools. The agent uses LocalShellBackend's
     `execute` for everything else (agent-browser CLI, ls, cat, etc.).
 

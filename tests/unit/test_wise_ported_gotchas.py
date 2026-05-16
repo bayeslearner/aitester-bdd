@@ -342,7 +342,7 @@ def test_per_rule_timeout_fires(monkeypatch):
 
     t = _make()
     t.define_rule('"slow_rule"')
-    t.set_rule_timeout("10")  # 10ms — should expire instantly
+    t.and_set_rule_timeout("10")  # 10ms — should expire instantly
     t.when_open('"http://x/page"')
     # multiple post-action observations to burn through the budget
     t.and_selector_exists('".one"')
