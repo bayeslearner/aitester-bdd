@@ -64,3 +64,6 @@ failures.jsonl
 walk_log.jsonl
 emit.jsonl
 site/
+
+# Serena local cache
+.serena/
