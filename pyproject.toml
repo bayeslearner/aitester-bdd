@@ -1,6 +1,6 @@
 [project]
 name = "aitester-bdd"
-version = "0.2.0"
+version = "0.3.0"
 description = "LLM-driven BDD test authoring for Robot Framework — turn an intention + live app into a .robot suite"
 readme = "README.md"
 authors = [{ name = "kundeng" }]

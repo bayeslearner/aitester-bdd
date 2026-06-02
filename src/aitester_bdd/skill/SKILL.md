@@ -3,7 +3,7 @@ name: aitester-bdd
 description: Author Robot Framework BDD test suites for web apps. You (the agent) drive a Playwright browser via the browser_* tools to explore the target, then produce a deterministic .robot file using the shipped keyword grammar — or a bug report if the system itself is broken in a way that prevents authoring. Selectors are grounded in real DOM attributes from browser_snapshot, never inferred. Use when given a story (intention) and a base URL.
 metadata:
   author: kundeng
-  version: "0.2.0"
+  version: "0.3.0"
   skill_version: 2
 ---
 

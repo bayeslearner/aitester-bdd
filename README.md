@@ -1,5 +1,7 @@
 # aitester-bdd
 
+📖 **Docs:** [kundeng.github.io/aitester-bdd](https://kundeng.github.io/aitester-bdd/) · 📦 **PyPI:** [aitester-bdd](https://pypi.org/project/aitester-bdd/)
+
 **LLM-driven BDD test authoring for Robot Framework.** Give it a story and a live web app; an agent explores the target via the `agent-browser` CLI, then writes a deterministic `.robot` suite with selectors grounded in the actual DOM it observed — or files a bug report when the system is broken in a way that prevents authoring.
 
 ## What it is
