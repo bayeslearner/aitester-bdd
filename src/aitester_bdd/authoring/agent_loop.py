@@ -444,8 +444,8 @@ def explore_with_agent(
     if _is_inside_rf():
         # Playwright path: typed tools wrapping the shared RF Browser
         from aitester_bdd.authoring.playwright_tools import (
-            build_playwright_browser_tools,
             PLAYWRIGHT_EXPLORE_PROMPT,
+            build_playwright_browser_tools,
         )
         browser_tools = build_playwright_browser_tools()
         tools = terminal_tools + browser_tools
@@ -454,6 +454,7 @@ def explore_with_agent(
     else:
         # Fallback: agent-browser CLI via shell (standalone / aitester author)
         from deepagents.backends import LocalShellBackend
+
         from aitester_bdd.authoring.tools import session_id
 
         tools = terminal_tools
