@@ -70,7 +70,7 @@ export OPENAI_API_KEY=sk-...
 ## Development install
 
 ```bash
-git clone https://github.com/kundeng/aitester-bdd.git
+git clone https://github.com/bayeslearner/aitester-bdd.git
 cd aitester-bdd
 uv sync --dev
 uv run pytest tests/ -q  # verify

@@ -68,9 +68,9 @@ docs = [
 aitester = "aitester_bdd.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/kundeng/aitester-bdd"
-Repository = "https://github.com/kundeng/aitester-bdd"
-Issues = "https://github.com/kundeng/aitester-bdd/issues"
+Homepage = "https://github.com/bayeslearner/aitester-bdd"
+Repository = "https://github.com/bayeslearner/aitester-bdd"
+Issues = "https://github.com/bayeslearner/aitester-bdd/issues"
 
 [build-system]
 requires = ["hatchling"]

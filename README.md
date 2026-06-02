@@ -1,6 +1,6 @@
 # aitester-bdd
 
-📖 **Docs:** [kundeng.github.io/aitester-bdd](https://kundeng.github.io/aitester-bdd/) · 📦 **PyPI:** [aitester-bdd](https://pypi.org/project/aitester-bdd/)
+📖 **Docs:** [bayeslearner.github.io/aitester-bdd](https://bayeslearner.github.io/aitester-bdd/) · 📦 **PyPI:** [aitester-bdd](https://pypi.org/project/aitester-bdd/)
 
 **A general end-to-end testing framework for any web app — where you describe the test in English and an agent writes a real, runnable test file by actually using your app.**
 
