@@ -62,6 +62,117 @@ CSS selectors are valid everywhere. Prefer data-testid > @ref > CSS.
 """
 
 
+# ─── Planning (spec 01-explore-author-planning) ──────────────────────
+#
+# Prompt-only planning (Option A). The deepagents default middleware stack
+# already includes langchain's TodoListMiddleware, which registers the
+# `write_todos` tool and persists its state under graph key "todos"
+# (readable post-run as result["todos"]). We only add domain-specific
+# guidance to our prompts and read the resulting plan back out. Everything
+# is gated behind _planning_enabled() so the disabled path is byte-identical
+# to the pre-spec prompts.
+
+
+def _planning_enabled() -> bool:
+    """Kill-switch for write_todos planning guidance (spec D4).
+
+    Default ON. Only the literal env values "false" / "0" (case-insensitive,
+    trimmed) disable it. Any other value — including unset — leaves planning
+    enabled.
+
+    The spec also mentions an RF ``${ENABLE_PLANNING}`` variable. Wiring that
+    cleanly would require threading a new parameter through AITester.py and the
+    RF keyword surface (invasive). Per the spec's "only if not invasive" clause
+    we keep this env-only for now.
+    # TODO(spec-01): RF-variable ${ENABLE_PLANNING} wiring (env-only today).
+    """
+    val = os.environ.get("AITESTER_PLANNING", "").strip().lower()
+    return val not in ("false", "0")
+
+
+# Appended (when enabled) to BOTH explore prompts. Self-enforces "did I do all
+# N steps?" via the todo list and encodes the switch-strategy discipline that
+# write_todos itself lacks (no `stalled` status).
+_EXPLORE_PLANNING_BLOCK = """
+
+## Planning (write_todos)
+Before touching the browser, call `write_todos` ONCE to lay out the journey:
+one todo per distinct story step, in order. Then drive the plan:
+  - Mark a step `in_progress` BEFORE you act on it.
+  - Mark it `completed` only AFTER that step's verification passes.
+  - Keep exactly one step `in_progress` at a time.
+The todo list — not your memory — is the source of truth for "have I done all
+the steps?". Do not call journey_complete while any todo is still pending or
+in_progress.
+
+Switch strategy on a stuck step (there is no `stalled` status, so do this
+explicitly): if a step's strategy fails twice (selector not found, action
+no-ops), REWRITE that todo's content with a DIFFERENT approach — a broader
+selector, a different attribute, a fresh re-snapshot — before retrying. Do NOT
+repeat the same failing move.
+"""
+
+# Appended (when enabled) to the author / explore_and_author system prompt.
+_AUTHOR_PLANNING_BLOCK = """
+
+## Planning (write_todos)
+Before writing the suite, call `write_todos` ONCE to plan rule emission: one
+todo per rule/step you intend to author, in story order. Mark each
+`in_progress` while you ground its selectors and `completed` once it is written.
+
+For EACH step, decide PIN vs FLUID and record that choice in the todo:
+  - PIN  — emit a stable selector traced to an attribute you actually observed
+           on the live page (data-testid, id, name, role). Never invent one.
+  - FLUID — emit an `I explore` line when no stable selector can be grounded
+           (data-dependent rows, dynamic content, state verification).
+This PIN/FLUID judgment MUST respect the pinning mode stated above; it refines
+that policy per step, it does not override it.
+"""
+
+
+def _summarize_todos(result: object) -> str:
+    """Render the final planning state (result["todos"]) as a compact summary.
+
+    deepagents/langchain's TodoListMiddleware persists the plan under the
+    "todos" key of the returned graph state. Each todo is
+    {content: str, status: "pending"|"in_progress"|"completed"}. Returns "" if
+    there is no plan (planning disabled, or the agent never called write_todos).
+    """
+    if not isinstance(result, dict):
+        return ""
+    todos = result.get("todos")
+    if not todos:
+        return ""
+    _glyph = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}
+    lines = []
+    for td in todos:
+        if isinstance(td, dict):
+            status = td.get("status", "pending")
+            content = td.get("content", "")
+        else:  # Todo TypedDict may arrive as an object in some versions
+            status = getattr(td, "status", "pending")
+            content = getattr(td, "content", "")
+        lines.append(f"  {_glyph.get(status, '[ ]')} {content}")
+    done = sum(
+        1
+        for td in todos
+        if (td.get("status") if isinstance(td, dict) else getattr(td, "status", None))
+        == "completed"
+    )
+    header = f"Plan ({done}/{len(todos)} steps completed):"
+    return header + "\n" + "\n".join(lines)
+
+
+def _explore_system_prompt() -> str:
+    """Standalone-CLI explore system prompt, with planning block when enabled.
+
+    Returns the untouched constant on the disabled path (byte-identical).
+    """
+    if _planning_enabled():
+        return _EXPLORE_SYSTEM_PROMPT + _EXPLORE_PLANNING_BLOCK
+    return _EXPLORE_SYSTEM_PROMPT
+
+
 # ─── Outputs ─────────────────────────────────────────────────────────
 
 
@@ -119,9 +230,10 @@ def build_system_prompt(mode: str, *, pinning: str = "auto") -> str:
     the termination conditions and output expectations.
     """
     if mode == "explore":
-        return _EXPLORE_SYSTEM_PROMPT
+        return _explore_system_prompt()
 
     base_skill = load_skill()
+    planning_block = _AUTHOR_PLANNING_BLOCK if _planning_enabled() else ""
 
     if mode == "explore_and_author":
         pinning_guidance = {
@@ -140,10 +252,10 @@ def build_system_prompt(mode: str, *, pinning: str = "auto") -> str:
             f"Mixed output (some I define rule blocks + some I explore calls) is valid.\n\n"
             f"---\n\n"
         )
-        return preamble + base_skill
+        return preamble + base_skill + planning_block
 
     # Default: pure author mode (CLI aitester author)
-    return base_skill
+    return base_skill + planning_block
 
 
 def _build_llm():
@@ -386,6 +498,20 @@ def _author_once(
     last = messages[-1] if messages else None
     final_message = str(getattr(last, "content", "")) if last is not None else ""
 
+    # D3 observability: surface the final write_todos plan. Log it always, and
+    # append it to the bug report (when report_bug fired) so a blocked author
+    # run carries its plan. result["todos"] holds the planning state.
+    plan_summary = _summarize_todos(result)
+    if plan_summary:
+        _rf_log(plan_summary)
+        if found_bug is not None:
+            try:
+                with open(found_bug, "a", encoding="utf-8") as fh:
+                    fh.write(f"\n\n## Planning trace\n\n{plan_summary}\n")
+            except OSError:
+                log.warning("could not append plan to bug report %s", found_bug)
+        final_message = f"{final_message}\n\n{plan_summary}" if final_message else plan_summary
+
     return AuthoringResult(
         suite_path=found_suite,
         bug_report_path=found_bug,
@@ -396,6 +522,21 @@ def _author_once(
 
 
 # ─── Explore (fluid test) ────────────────────────────────────────────
+
+
+def _rf_log(message: str) -> None:
+    """Emit a message to the Robot Framework log when inside RF; else module log.
+
+    Used for D3 planning observability so the plan lands in the RF report, not
+    only the token logs.
+    """
+    try:
+        from robot.api import logger as rf_logger
+        rf_logger.info(message)
+        return
+    except Exception:
+        pass
+    log.info(message)
 
 
 def _is_inside_rf() -> bool:
@@ -449,7 +590,10 @@ def explore_with_agent(
         )
         browser_tools = build_playwright_browser_tools()
         tools = terminal_tools + browser_tools
-        system_prompt = PLAYWRIGHT_EXPLORE_PROMPT
+        # Disabled path returns the untouched constant (byte-identical).
+        system_prompt = PLAYWRIGHT_EXPLORE_PROMPT + (
+            _EXPLORE_PLANNING_BLOCK if _planning_enabled() else ""
+        )
         backend = None
     else:
         # Fallback: agent-browser CLI via shell (standalone / aitester author)
@@ -458,7 +602,7 @@ def explore_with_agent(
         from aitester_bdd.authoring.tools import session_id
 
         tools = terminal_tools
-        system_prompt = _EXPLORE_SYSTEM_PROMPT
+        system_prompt = _explore_system_prompt()
         browser_session = session or session_id()
         backend_env = dict(os.environ)
         backend_env["AGENT_BROWSER_SESSION"] = browser_session
@@ -556,7 +700,16 @@ def explore_with_agent(
     messages = result.get("messages", []) if isinstance(result, dict) else []
     notes, bug = get_explore_result()
 
+    # D3 observability: surface the final write_todos plan to the RF log, and
+    # fold it into the bug report on journey_blocked. result["todos"] holds the
+    # planning state (TodoListMiddleware). Empty when planning is off / unused.
+    plan_summary = _summarize_todos(result)
+    if plan_summary:
+        _rf_log(plan_summary)
+
     if notes:
+        if plan_summary:
+            notes = f"{notes}\n\n{plan_summary}"
         return ExploreResult(
             passed=True,
             notes=notes,
@@ -564,6 +717,8 @@ def explore_with_agent(
             final_message=notes,
         )
     elif bug:
+        if plan_summary:
+            bug = f"{bug}\n\n{plan_summary}"
         return ExploreResult(
             passed=False,
             bug_report=bug,
