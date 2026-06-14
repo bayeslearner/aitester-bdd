@@ -137,6 +137,24 @@ revert to **today's exact text** — no behavior change.
 1. Does the in-RF Playwright path preserve `TodoListMiddleware` state in
    `result["todos"]`? Both backends call the default `create_deep_agent`
    stack, so expected yes — **verify at implementation**.
+   → **RESOLVED (static):** `PlanningState.todos` is `OmitFromSchema(output=False)`
+   (kept in output) and `write_todos` returns `Command(update={"todos": …})`;
+   both loops already read `result["messages"]` from the same returned graph
+   state, so `result["todos"]` is reachable. `_summarize_todos` guards
+   missing/empty. Live-run confirmation still pending (needs LLM proxy + browser).
 2. Does appending our planning block interact badly with the middleware's own
    auto-injected `WRITE_TODOS_SYSTEM_PROMPT` (duplication / contradiction)?
    Check token cost and for conflicting "when to use" guidance.
+   → **OPEN:** our blocks add domain guidance (journey steps / PIN-vs-FLUID) on
+   top of the generic middleware prompt; no contradiction spotted, token cost
+   unmeasured. Revisit if planning runs look bloated.
+
+## Implementation status
+
+Code landed on `main` @ `1b3b832` (2026-06-14): env kill-switch
+`AITESTER_PLANNING` (default on; RF `${ENABLE_PLANNING}` deferred —
+`# TODO(spec-01)`), D1/D2 prompt blocks, D3 `result["todos"]` → RF log + notes +
+bug reports. Verified: imports, `ruff check`, 38 tests pass, disabled path
+byte-identical. **Behavioral verification (does planning help here) is still
+unverified** — no A/B eval harness in this repo (Non-goal). Spec stays DRAFT
+until a live run / eval confirms the effect.
