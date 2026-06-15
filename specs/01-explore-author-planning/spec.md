@@ -154,7 +154,27 @@ revert to **today's exact text** — no behavior change.
 Code landed on `main` @ `1b3b832` (2026-06-14): env kill-switch
 `AITESTER_PLANNING` (default on; RF `${ENABLE_PLANNING}` deferred —
 `# TODO(spec-01)`), D1/D2 prompt blocks, D3 `result["todos"]` → RF log + notes +
-bug reports. Verified: imports, `ruff check`, 38 tests pass, disabled path
-byte-identical. **Behavioral verification (does planning help here) is still
-unverified** — no A/B eval harness in this repo (Non-goal). Spec stays DRAFT
-until a live run / eval confirms the effect.
+bug reports. Static verification: imports, `ruff check`, 38 tests pass, disabled
+path byte-identical.
+
+**Live functional verification — PASSED (2026-06-15, `aitester author`, model
+`cc/claude-sonnet-4-6` via local proxy, target en.wikipedia.org):**
+- D1: agent called `write_todos` 8× and decomposed the journey
+  (first todo: "Explore: open Wikipedia homepage and snapshot").
+- D2: emitted a fully-PINNED rule DAG with selectors grounded in real DOM
+  (`#searchInput`, `button.cdx-search-input__end-button`, `h1#firstHeading`,
+  `#mw-content-text p`) + parent links.
+- D3: **Open Question #1 now confirmed live** — `result["todos"]` populated at
+  the author read point; `final_message` carried
+  `Plan (5/5 steps completed)` with all steps `[x]`.
+- `_summarize_todos` unit-checked deterministically (glyphs, counts, empty/
+  non-dict guards).
+
+**Still NOT measured:** comparative benefit (planning ON vs OFF effect size).
+That needs an A/B eval harness — a Non-goal here; the speedup remains
+assumed-by-analogy to picobay spec 11, not measured in this repo. Spec stays
+DRAFT until that comparative effect is shown (or explicitly waived).
+
+Aside (not planning-related): the run surfaced a pre-existing
+`LocalShellBackend virtual_mode` deprecation warning at `agent_loop.py:410` —
+worth addressing separately.
