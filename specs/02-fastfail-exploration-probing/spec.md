@@ -71,15 +71,15 @@ overwritten on update — so the prompt fixes (D1) are the durable backstop.
 ## Tasks
 
 ### P1 — Must Do
-- [ ] 1.1 Prompt fail-fast guidance in `_EXPLORE_SYSTEM_PROMPT` + author
+- [x] 1.1 Prompt fail-fast guidance in `_EXPLORE_SYSTEM_PROMPT` + author
       `build_system_prompt` (agent-browser/CLI path): probe with
       count/is-visible/eval; never `get text/html/attr` on unverified selectors.
-- [ ] 1.2 Prompt fail-fast guidance in `PLAYWRIGHT_EXPLORE_PROMPT` (in-RF path):
+- [x] 1.2 Prompt fail-fast guidance in `PLAYWRIGHT_EXPLORE_PROMPT` (in-RF path):
       probe count first; content getters only on confirmed selectors.
-- [ ] 1.3 Code: `playwright_tools._get_text`/`_get_attribute` count-check first
+- [x] 1.3 Code: `playwright_tools._get_text`/`_get_attribute` count-check first
       (return "" instantly on 0 matches); set a short explore browser timeout.
 - [ ] 1.4 Skill: add the 30s-quirk + probe-first note to the agent-browser skill.
-- [ ] 1.5 Verify: imports, `ruff check`, full `pytest` (baseline 38), and a
+- [x] 1.5 Verify: imports, `ruff check`, full `pytest` (baseline 38), and a
       direct timing harness proving a missed probe is now fast on the in-RF
       Playwright getter.
 
@@ -96,3 +96,19 @@ overwritten on update — so the prompt fixes (D1) are the durable backstop.
 ## Log
 **2026-06-15** — Created from the driver diagnosis. Root cause + 3-layer fix
 (prompt/code/skill) decided. Depends on spec-01 (planning) for the A/B re-run.
+
+**2026-06-14** — Implemented P1 tasks 1.1/1.2/1.3/1.5 on branch
+`feat/02-fastfail-probing`. (1.1) Added a "Selector probing — avoid 30s stalls"
+block to `_EXPLORE_SYSTEM_PROMPT` and a new `_AUTHOR_PROBING_BLOCK` appended to
+both author paths in `build_system_prompt` (default author + explore_and_author).
+(1.2) Added a probe-before-read efficiency rule (#6) to `PLAYWRIGHT_EXPLORE_PROMPT`.
+(1.3) Structural fix: `playwright_tools._get_text` now count-checks via
+`_get_backend().get_count()` first and returns `{"success": True, "text": ""}`
+immediately on 0 matches, never calling the auto-waiting `get_text` on a miss;
+existing try/except → empty kept as fallback. Confirmed `_PlaywrightBackend.get_count`
+(engine/browser.py) is the cheap guard (uses `get_element_count`, returns 0 on
+exception). Note: `_get_attribute`/`_get_value` are not exposed as Playwright tool
+functions, so 1.3's guard applies to `_get_text` only. (1.5) Verified: imports OK,
+`ruff check` clean, `pytest` 38 passed (matches baseline), and a stub-backend unit
+proof shows `_get_text` returns empty in ~0s WITHOUT calling the backend `get_text`
+(stub would sleep 30s / assert if called). Task 1.4 (skill) and P2 left untouched.

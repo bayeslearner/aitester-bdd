@@ -60,6 +60,13 @@ agent-browser quick reference:
 
 Snapshot refs (@e1, @e2) are valid for click/fill/type/get commands.
 CSS selectors are valid everywhere. Prefer data-testid > @ref > CSS.
+
+>>> SELECTOR PROBING — avoid 30s stalls <<<
+`agent-browser get text/html/attr/value/box` BLOCKS ~30s when the selector
+matches 0 elements. Before reading content, confirm the selector exists with
+`get count <sel>` or `is visible <sel>` or `eval` (all instant). Only call
+`get text/html/attr` on a selector you've confirmed has count > 0. Never probe
+a guessed selector with a content getter.
 """
 
 
@@ -152,6 +159,20 @@ For EACH step, decide PIN vs FLUID and record that choice in the todo:
            (data-dependent rows, dynamic content, state verification).
 This PIN/FLUID judgment MUST respect the pinning mode stated above; it refines
 that policy per step, it does not override it.
+"""
+
+
+# Appended to the author / explore_and_author system prompts (agent-browser/CLI
+# path). Mirrors the _EXPLORE_SYSTEM_PROMPT probing note so the author agent,
+# which also drives the agent-browser CLI, avoids the 30s content-getter stall.
+_AUTHOR_PROBING_BLOCK = """
+
+## Selector probing — avoid 30s stalls
+`agent-browser get text/html/attr/value/box` BLOCKS ~30s when the selector
+matches 0 elements. Before reading content, confirm the selector exists with
+`get count <sel>` or `is visible <sel>` or `eval` (all instant). Only call
+`get text/html/attr` on a selector you've confirmed has count > 0. Never probe a
+guessed selector with a content getter.
 """
 
 
@@ -277,10 +298,10 @@ def build_system_prompt(mode: str, *, pinning: str = "auto") -> str:
             f"Mixed output (some I define rule blocks + some I explore calls) is valid.\n\n"
             f"---\n\n"
         )
-        return preamble + base_skill + planning_block
+        return preamble + base_skill + planning_block + _AUTHOR_PROBING_BLOCK
 
     # Default: pure author mode (CLI aitester author)
-    return base_skill + planning_block
+    return base_skill + planning_block + _AUTHOR_PROBING_BLOCK
 
 
 def _build_llm():

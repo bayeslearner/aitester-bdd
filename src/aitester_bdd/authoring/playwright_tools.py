@@ -146,6 +146,15 @@ def _click(selector: str) -> str:
 
 def _get_text(selector: str) -> str:
     b = _get_backend()
+    # Fail-fast: count-check first (instant) and return empty immediately on a
+    # 0-match selector — never call the auto-waiting getter on a miss. Mirrors
+    # picobay's BrowserDriverExplorer; removes the wait structurally on the
+    # in-RF path regardless of prompt guidance.
+    try:
+        if b.get_count(selector) == 0:
+            return json.dumps({"success": True, "text": ""})
+    except Exception:
+        pass  # fall through to the getter's own try/except → empty fallback
     try:
         text = b.get_text(selector)
         return json.dumps({"success": True, "text": text})
@@ -301,6 +310,7 @@ PLAYWRIGHT_EXPLORE_PROMPT = """You are a QA tester exploring a live web applicat
 3. Use CSS selectors from the snapshot. The @eN refs are for reference — use the actual CSS selector (tag, role, href, placeholder) to click/fill.
 4. After navigating to a new page, one snapshot tells you everything. Don't call get_text/get_count if the snapshot already shows the answer.
 5. Verify observations by reading the snapshot, not by individual get_text calls.
+6. Probe existence before reading: use browser_get_count (or browser_eval) to confirm a selector matches. Call browser_get_text only on a confirmed (count > 0) selector — never on a guessed one.
 
 ## Completion
 - When done with ALL steps, call journey_complete with detailed notes.
