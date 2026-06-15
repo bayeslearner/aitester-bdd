@@ -170,10 +170,43 @@ path byte-identical.
 - `_summarize_todos` unit-checked deterministically (glyphs, counts, empty/
   non-dict guards).
 
-**Still NOT measured:** comparative benefit (planning ON vs OFF effect size).
-That needs an A/B eval harness — a Non-goal here; the speedup remains
-assumed-by-analogy to picobay spec 11, not measured in this repo. Spec stays
-DRAFT until that comparative effect is shown (or explicitly waived).
+**Comparative A/B — RUN 2026-06-15, NO clean win + a confound found.**
+3 hard targets from the wise-rpa-bdd job corpus (the lineage aitester-bdd
+descends from), each `aitester author` ON vs OFF, sonnet-4-6. Raw:
+`eval-ab-2026-06-15.tsv`.
+
+| site | arm | suite | secs | iters | write_todos |
+|------|-----|-------|------|-------|-------------|
+| quotes-js | ON  | yes | 158 | 35 | 4 | ON **slower** |
+| quotes-js | OFF | yes | 100 | 23 | 3 | |
+| oscar-films | ON  | yes | 194 | 31 | 3 | ON faster wall, more iters |
+| oscar-films | OFF | yes | 235 | 25 | 3 | |
+| hockey-teams | ON  | no (timeout 360s) | — | 16 | 3 | both FAIL |
+| hockey-teams | OFF | no (timeout 360s) | — | 22 | 2 | |
+
+Findings:
+1. **No replication of picobay's +34%.** Directionally mixed-to-negative:
+   quotes-js was *worse* with our block (+58s, +12 iters); oscar-films faster
+   wall but more iters; hockey-teams (form pagination) failed both arms.
+2. **The A/B is CONFOUNDED — the OFF arm still plans.** `write_todos` fired
+   2–3× even with `AITESTER_PLANNING=0`. Root cause: D4 only omits *our prompt
+   block*; deepagents' `TodoListMiddleware` (the `write_todos` tool **and** its
+   own generic todo prompt) is in the default `create_deep_agent` stack and is
+   always on. So this measured "domain-specific block vs generic-middleware
+   default", NOT "planning vs no planning".
+3. **D4 is therefore an incomplete kill-switch — a real defect.** A true
+   off-switch must exclude `TodoListMiddleware` from the stack (deepagents
+   `excluded_middleware`), not just drop our text.
+4. **Implication for the spec's premise.** The base agent already plans via
+   middleware; D1/D2 add guidance *on top*, and on this sample that delta is
+   not a win (and sometimes a regression). spec-01's marginal value over the
+   middleware baseline is **unproven-to-negative**.
+
+**Verdict: DRAFT, NOT promoted.** A valid A/B isn't even possible until D4 is
+fixed to truly disable the tool. Open options: (a) fix D4 (exclude middleware)
+and re-run a clean A/B; (b) reconsider whether the D1/D2 blocks earn their
+tokens at all given the always-on middleware; (c) accept planning-by-middleware
+as the baseline and drop the domain blocks. Decision deferred to maintainer.
 
 Aside (not planning-related): the run surfaced a pre-existing
 `LocalShellBackend virtual_mode` deprecation warning at `agent_loop.py:410` —

@@ -1,0 +1,8 @@
+site	arm	suite	seconds	iters	write_todos	exit
+quotes-js	ON	yes	158	35	8	0
+quotes-js	OFF	yes	100	23	6	0
+oscar-films	ON	yes	194	31	6	0
+oscar-films	OFF	yes	235	25	6	0
+hockey-teams	ON	no	360	16	6	124
+hockey-teams	OFF	no	360	22	4	124
+DONE
