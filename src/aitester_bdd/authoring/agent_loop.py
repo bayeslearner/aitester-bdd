@@ -21,6 +21,7 @@ the exploration step-by-step — that's the whole point.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from dataclasses import dataclass
@@ -88,6 +89,30 @@ def _planning_enabled() -> bool:
     """
     val = os.environ.get("AITESTER_PLANNING", "").strip().lower()
     return val not in ("false", "0")
+
+
+@contextlib.contextmanager
+def _maybe_disable_todo_middleware():
+    """When planning is disabled, swap deepagents' always-on TodoListMiddleware
+    for a no-op so the OFF state is *truly* planning-free — no write_todos tool
+    and no todo prompt. Fixes spec-01 D4, which previously only dropped our own
+    prompt block while the middleware kept planning active (confounded the A/B).
+    """
+    if _planning_enabled():
+        yield
+        return
+    import deepagents.graph as _g
+    from langchain.agents.middleware.types import AgentMiddleware as _AgentMiddleware
+
+    class _NoTodo(_AgentMiddleware):  # no tools, no wrap_model_call → injects nothing
+        pass
+
+    _orig = _g.TodoListMiddleware
+    _g.TodoListMiddleware = _NoTodo
+    try:
+        yield
+    finally:
+        _g.TodoListMiddleware = _orig
 
 
 # Appended (when enabled) to BOTH explore prompts. Self-enforces "did I do all
@@ -415,13 +440,14 @@ def _author_once(
         max_output_bytes=200_000,
     )
 
-    agent = create_deep_agent(
-        model=llm,
-        tools=tools,
-        system_prompt=system_prompt,
-        backend=backend,
-        checkpointer=InMemorySaver(),
-    )
+    with _maybe_disable_todo_middleware():
+        agent = create_deep_agent(
+            model=llm,
+            tools=tools,
+            system_prompt=system_prompt,
+            backend=backend,
+            checkpointer=InMemorySaver(),
+        )
 
     # Slug for the bug-report filename in case the agent reaches for one.
     slug = _slugify(story)[:60] or "untitled"
@@ -623,7 +649,8 @@ def explore_with_agent(
     if backend is not None:
         agent_kwargs["backend"] = backend
 
-    agent = create_deep_agent(**agent_kwargs)
+    with _maybe_disable_todo_middleware():
+        agent = create_deep_agent(**agent_kwargs)
 
     import re
     numbered = re.findall(r'\d+\)', story)

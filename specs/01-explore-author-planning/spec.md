@@ -109,10 +109,21 @@ RF-log analog of picobay's `onProgress('planning', …)` trace events. No new
 trace channel.
 
 ### D4 — Kill-switch (EP1)
-Gate the D1/D2 prompt blocks behind `enable_planning` (default **true**),
-settable via RF variable `${ENABLE_PLANNING}` and/or env `AITESTER_PLANNING`,
-mirroring picobay's `enablePlanning` resource global. When false, prompts
-revert to **today's exact text** — no behavior change.
+Gate planning behind `enable_planning` (default **true**), settable via RF
+variable `${ENABLE_PLANNING}` and/or env `AITESTER_PLANNING`, mirroring
+picobay's `enablePlanning` resource global. When false, the agent is built
+**truly planning-free**: the D1/D2 prompt blocks are dropped *and*
+deepagents' always-on `TodoListMiddleware` is swapped for a no-op
+`AgentMiddleware` during `create_deep_agent` (so the model sees no
+`write_todos` tool and no generic todo prompt).
+
+> **Semantics change (2026-06-15):** OFF previously meant "today's exact
+> behavior" — i.e. the middleware's `write_todos` stayed active, only our
+> text was dropped. That confounded the planning A/B (the OFF arm still
+> planned). OFF now means **all planning off**, which is the correct meaning
+> for a planning kill-switch. Implemented via a construction-time swap of
+> `deepagents.graph.TodoListMiddleware` (`_maybe_disable_todo_middleware`),
+> not `excluded_middleware`.
 
 ## Constraints
 
@@ -207,6 +218,19 @@ fixed to truly disable the tool. Open options: (a) fix D4 (exclude middleware)
 and re-run a clean A/B; (b) reconsider whether the D1/D2 blocks earn their
 tokens at all given the always-on middleware; (c) accept planning-by-middleware
 as the baseline and drop the domain blocks. Decision deferred to maintainer.
+
+**D4 FIXED (2026-06-15, branch `fix/d4-true-planning-off`).** Finding #3 above
+is resolved. The OFF path now swaps `deepagents.graph.TodoListMiddleware` for a
+no-op `AgentMiddleware` subclass at construction time
+(`_maybe_disable_todo_middleware`, wrapping both `create_deep_agent` calls).
+This **changes the OFF semantics** from "today's exact behavior (middleware
+todos still on)" to "all planning off" — the correct meaning for a kill-switch.
+Probe (recorder middleware capturing `request.tools` / `request.system_prompt`,
+both arms via `create_deep_agent`):
+- ON  (`AITESTER_PLANNING` unset/true): `write_todos` IS in tools AND in prompt.
+- OFF (`AITESTER_PLANNING=false`): `write_todos` NOT in tools AND NOT in prompt.
+`ruff check` clean, 38 tests pass, module imports. A clean planning-vs-no-planning
+A/B (option a) is now possible; re-run + promotion decision still deferred.
 
 Aside (not planning-related): the run surfaced a pre-existing
 `LocalShellBackend virtual_mode` deprecation warning at `agent_loop.py:410` —
