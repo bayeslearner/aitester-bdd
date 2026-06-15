@@ -4,29 +4,69 @@ Written 2026-06-15 while diagnosing a 30s-per-probe stall in `aitester author`.
 Captures a real inconsistency: **the same logical "explore" operation runs on
 two different browser drivers depending on entry point.**
 
-## Two entry points, one agent function, two drivers
+## Three exploration approaches, compared
 
-Both entry points converge on the same agent functions in
+Both Python entry points converge on the same agent functions in
 `authoring/agent_loop.py` (`author_with_agent` / `explore_with_agent`), then
-**diverge on the browser driver** via `_is_inside_rf()`:
+**diverge on the browser driver** via `_is_inside_rf()`. The TypeScript port
+(`@picobay/engine`) is a separate implementation of the same idea. Full matrix:
 
-| | CLI `aitester author` | in-RF `I explore` / `I explore and author` |
-|---|---|---|
-| Entry | `cli.py:75` → `author_with_agent` | `AITester.py:1890/1927` records a plan node → walk time `engine/walk.py:897` → `explore_with_agent` |
-| `_is_inside_rf()` | **False** | **True** |
-| Tools given to the deep agent | terminal tools only + `LocalShellBackend` `execute` | typed `browser_*` tools (`build_playwright_browser_tools`) |
-| Browser driver | **agent-browser CLI** (third-party tool), driven by the agent **writing shell commands** (`agent-browser get text '…'`) through `execute` | **Playwright** via `_PlaywrightBackend` → the shared **robotframework-browser** `Browser` session (`engine/browser.py`) |
-| Prompt | `_EXPLORE_SYSTEM_PROMPT` (agent-browser cheatsheet) | `PLAYWRIGHT_EXPLORE_PROMPT` (browser_* tool cheatsheet) |
+| property | **Py · CLI** `aitester author` | **Py · in-RF** `I explore` (suite) | **TS port** `@picobay/engine` |
+|---|---|---|---|
+| Entry | `cli.py:75` → `author_with_agent` (`_is_inside_rf=False`) | `AITester.py:1890/1927` plan node → `engine/walk.py:897` → `explore_with_agent` (`_is_inside_rf=True`) | `ToolLoopAgent` → `exploreGoal`/`generateDeployment` (`inception-executor.ts`) |
+| Browser driver | **agent-browser CLI** (3rd-party) | **Playwright** via `_PlaywrightBackend` → robotframework-browser (`engine/browser.py`) | **`BrowserDriver` interface** — CDP (`chrome.debugger`) in the extension, Playwright in CLI/eval |
+| Transport | subprocess shell-out per command (daemon session) | in-process typed tool calls | in-process (CDP or Playwright) |
+| Agent tool surface | **raw shell strings** — agent writes `agent-browser get text '…'` via `execute` | **typed** `browser_*` StructuredTools | **typed** inception tools over `BrowserDriverExplorer` |
+| Probe wrapper | **none** — agent calls getters directly, eats the wait | backend `try/except → ""` (returns empty, but *after* the wait) | **explicit fail-fast** — `count()→0`, `text()→""`, `attr()→""` on any error, returns immediately (`agents/driver-explorer.ts:69-91`) |
+| Content-getter on **missing** selector | **30s hang** (`get text/html/attr/value/box`), then `os error 35` | up to the **Browser-lib timeout** (~10s default, configurable) | **instant** (CDP `getText` is a direct DOM query; no auto-wait) |
+| Fail-fast existence probe | `get count` / `is visible` / `eval` (0s) | `browser_get_count` / `browser_eval` (fast) | `count()` (0s) — and *all* probes are wrapped fail-fast |
+| Timeout default / override | **30s, no CLI flag/env to change** | ~10s, `Set Browser Timeout` | configurable: `setBrowserTimeout()`, `waitForSelector(…, timeoutMs)` |
+| Prompt | `_EXPLORE_SYSTEM_PROMPT` (agent-browser cheatsheet) | `PLAYWRIGHT_EXPLORE_PROMPT` | spec-11 explorer prompt |
+| Driver swappable? | no (hardwired to agent-browser CLI) | no (hardwired to Playwright/RF) | **yes** — driver is an injected interface |
+| Verified live (2026-06-15)? | yes (the 30s stall) | **no** (inferred from code) | n/a here |
 
-So:
+Key takeaways:
 - The **explore-and-author keyword IS equivalent to the CLI author** in *agent
   logic* (same `author_with_agent`, `mode="explore_and_author"`) — but they run
   on **different drivers**. That's the inconsistency.
-- The **in-RF path does NOT use agent-browser.** It uses Playwright typed tools
-  — exactly as expected, because the suite runtime supports
-  agent-browser | playwright | nodriver, so the embedded explorer goes through
-  tool-calling against the (here) Playwright backend. The deep agent calls
-  `browser_get_text` / `browser_get_count` / `browser_eval`, not `agent-browser`.
+- The **in-RF path does NOT use agent-browser** — it uses Playwright typed
+  tools, exactly as expected since the runtime supports
+  agent-browser | playwright | nodriver.
+- **The TS port is the cleanest design:** a single `BrowserDriver` *interface*
+  with an explicit **fail-fast probe wrapper** (`BrowserDriverExplorer`), so the
+  30s-hang class of bug is structurally impossible regardless of the concrete
+  driver. The Python side has no such wrapper — the CLI path inherits whatever
+  the agent-browser CLI does (30s), the in-RF path inherits the RF Browser
+  timeout. **This is the design lesson to port back to Python.**
+
+## The agent-browser 30s quirk — rigorously confirmed (2026-06-15)
+
+Direct timing of the third-party `agent-browser` binary, missing selector
+(`.nope-xyz`) on a loaded page:
+
+| command | time | result |
+|---|---|---|
+| `get text` / `get html` / `get attr` / `get value` / `get box` | **30.0s** | fail, `os error 35` |
+| `get count` | 0.0s | `count: 0` |
+| `is visible` | 0.0s | `visible: false` |
+
+Clean split: **content getters** (which resolve a Playwright auto-waiting
+locator) hang the full 30s default timeout; **count/predicate getters** (which
+use non-waiting queries) are instant. The CLI exposes **no timeout flag or env
+var** to shorten it.
+
+**The agent-browser skill does NOT warn about this** (`~/.claude/skills/
+agent-browser/`) — it documents `get count` and `wait` but never mentions that
+content getters block 30s on a miss. So a prompt/skill note is both a valid
+mitigation *and* fills a real gap:
+
+> When exploring, NEVER call `get text/html/attr/value/box` on a selector you
+> have not confirmed exists — each missing-selector call blocks ~30s. Probe
+> existence first with `get count` or `is visible` (instant), then read content
+> only on confirmed (`count > 0`) selectors.
+
+This is cheap and effective, but prompt-reliability-dependent (a workaround, not
+a fix). The structural fix is the TS port's pattern: a fail-fast probe wrapper.
 
 ## Runtime (exploitation) backends — separate from the above
 
