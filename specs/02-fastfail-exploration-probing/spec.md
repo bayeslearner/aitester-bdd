@@ -78,7 +78,7 @@ overwritten on update — so the prompt fixes (D1) are the durable backstop.
       probe count first; content getters only on confirmed selectors.
 - [x] 1.3 Code: `playwright_tools._get_text`/`_get_attribute` count-check first
       (return "" instantly on 0 matches); set a short explore browser timeout.
-- [ ] 1.4 Skill: add the 30s-quirk + probe-first note to the agent-browser skill.
+- [x] 1.4 Skill: add the 30s-quirk + probe-first note to the agent-browser skill.
 - [x] 1.5 Verify: imports, `ruff check`, full `pytest` (baseline 38), and a
       direct timing harness proving a missed probe is now fast on the in-RF
       Playwright getter.
@@ -112,3 +112,8 @@ functions, so 1.3's guard applies to `_get_text` only. (1.5) Verified: imports O
 `ruff check` clean, `pytest` 38 passed (matches baseline), and a stub-backend unit
 proof shows `_get_text` returns empty in ~0s WITHOUT calling the backend `get_text`
 (stub would sleep 30s / assert if called). Task 1.4 (skill) and P2 left untouched.
+
+**2026-06-15** — (1.4) Added a "⚠ Probe before you read" note to the
+agent-browser skill (`~/.claude/skills/agent-browser/references/commands.md`)
+documenting the 30s content-getter stall and the count/is-visible-first probe
+pattern. P1 complete. Next: P2.1 re-run planning A/B on the fail-fast path.
