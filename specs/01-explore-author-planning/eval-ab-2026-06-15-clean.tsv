@@ -1,0 +1,13 @@
+site	trial	arm	suite	seconds	iters	wt_calls	exit
+quotes-js	1	OFF	yes	49	19	0	0
+quotes-js	2	ON	yes	247	45	3	0
+quotes-js	1	ON	yes	326	43	4	0
+oscar-films	1	OFF	no	360	12	0	124
+oscar-films	1	ON	no	360	42	2	124
+quotes-js	2	OFF	yes	110	21	0	0
+quotes-js	3	OFF	yes	124	27	0	0
+oscar-films	2	ON	yes	273	27	3	0
+quotes-js	3	ON	yes	256	29	3	0
+oscar-films	2	OFF	no	360	24	0	124
+oscar-films	3	ON	yes	245	31	3	0
+oscar-films	3	OFF	no	360	18	0	124

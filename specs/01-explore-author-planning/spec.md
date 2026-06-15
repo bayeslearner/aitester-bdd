@@ -235,3 +235,34 @@ A/B (option a) is now possible; re-run + promotion decision still deferred.
 Aside (not planning-related): the run surfaced a pre-existing
 `LocalShellBackend virtual_mode` deprecation warning at `agent_loop.py:410` —
 worth addressing separately.
+
+**CLEAN A/B (post-D4-fix, 2026-06-15) — planning effect is TASK-DEPENDENT, not
+a blanket win.** N=3/arm, truly-off OFF (0 `write_todos`), sonnet-4-6, parallel
+@ concurrency 4, 360s timeout. Raw: `eval-ab-2026-06-15-clean.tsv`.
+
+| site | arm | suite ok | mean s | mean iters | mean wt |
+|------|-----|----------|--------|-----------|---------|
+| quotes-js (easy) | OFF | 3/3 | **94**  | 22 | 0 |
+| quotes-js (easy) | ON  | 3/3 | 276 | 39 | 3.3 |
+| oscar-films (AJAX, hard) | OFF | **0/3** (timeout) | 360 | 18 | 0 |
+| oscar-films (AJAX, hard) | ON  | **2/3** | 293 | 33 | 2.7 |
+
+Findings:
+1. **D4 fix validated live:** 0 `write_todos` across all 6 OFF runs — the
+   kill-switch truly disables planning; the A/B is now trustworthy.
+2. **Easy task → planning HURTS:** quotes-js ON is ~2.9× slower (276 vs 94s) and
+   ~75% more iters (39 vs 22), both arms succeed. Pure overhead.
+3. **Hard task → planning HELPS convergence:** oscar-films OFF failed to author
+   in 6 min on all 3 trials; ON completed 2/3 (245–273s). The plan helped the
+   agent commit to a terminal `write_robot_suite` instead of wandering to
+   timeout. (n=3 w/ timeouts → suggestive, not proven.)
+4. **No replication of picobay's "+34% everywhere."** Directionally consistent
+   with picobay's deeper read (planning helps harder structured tasks, overhead
+   elsewhere), but the easy-case regression here is large.
+
+**VERDICT: do NOT keep planning default-ON.** The ~3× easy-case slowdown is too
+costly for a blanket default. Recommended: flip default to OFF with opt-in for
+hard/slow-to-converge targets, OR fix the prompt-induced iteration bloat (the
+"call write_todos first + mark each step" guidance ~doubles rounds on easy
+sites) before reconsidering default-on. Spec remains **DRAFT**; promotion
+declined on this evidence.
