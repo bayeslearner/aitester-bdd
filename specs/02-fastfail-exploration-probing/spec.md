@@ -84,9 +84,11 @@ overwritten on update — so the prompt fixes (D1) are the durable backstop.
       Playwright getter.
 
 ### P2 — Should Do (the "correct understanding of planning")
-- [ ] 2.1 Re-run a clean planning A/B on the fail-fast path: 1 easy + 1 hard
-      target, ON vs OFF, measuring **tool-call counts + LLM time** (not
-      stall-dominated wall-clock). Record in spec-01's eval section.
+- [x] 2.1 Re-run a clean planning A/B on the fail-fast path. Stalls confirmed
+      eliminated (0–1/run vs many pre-fix). Clean serial easy-site result
+      recorded in spec-01: planning is ~10–20% overhead, not the earlier 3×
+      artifact. Hard site (oscar-films) left unmeasured — rate-limit/latency
+      bound in this env (n=1).
 
 ## Open Questions
 - [ ] Should the CLI path eventually converge onto Playwright (true driver
@@ -117,3 +119,13 @@ proof shows `_get_text` returns empty in ~0s WITHOUT calling the backend `get_te
 agent-browser skill (`~/.claude/skills/agent-browser/references/commands.md`)
 documenting the 30s content-getter stall and the count/is-visible-first probe
 pattern. P1 complete. Next: P2.1 re-run planning A/B on the fail-fast path.
+
+**2026-06-15** — (2.1) Fail-fast fix VERIFIED on live runs: stalls>15s dropped
+to 0–1/run (vs many pre-fix); tool mix now `count`/`eval`-dominated. A first
+concurrent A/B was invalid (my runner raced `AITESTER_PLANNING` via global
+`os.environ` across threads → `write_todos=0` everywhere; oscar-films also
+hit rate-limit backoff). Re-ran **serial** quotes-js ON/OFF — planning fired
+(`write_todos=3` ON / `0` OFF), both succeeded; planning = ~+9% wall / +19%
+LLM time / +54% calls, no benefit. Recorded the correction in spec-01 (the
+"3×" was the stall artifact). spec-02 P1+P2 done; ready to mark SHIPPED on
+review. Hard-site clean measurement deferred (env-bound).

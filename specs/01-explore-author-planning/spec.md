@@ -266,3 +266,23 @@ hard/slow-to-converge targets, OR fix the prompt-induced iteration bloat (the
 "call write_todos first + mark each step" guidance ~doubles rounds on easy
 sites) before reconsidering default-on. Spec remains **DRAFT**; promotion
 declined on this evidence.
+
+**CORRECTION (2026-06-15, post spec-02 fail-fast fix).** The "~3× slower" above
+was an artifact: it was dominated by agent-browser's **30s-per-missed-probe
+stall** (see `docs/internals/exploration-driver-map.md` + spec-02), NOT
+planning. After spec-02 eliminated the stalls, a **clean serial** A/B (no env
+race, planning confirmed firing — `write_todos=3` ON / `0` OFF) on quotes-js:
+
+| arm | suite | wall | llm_calls | llm_time | write_todos |
+|-----|-------|------|-----------|----------|-------------|
+| OFF | ✓ | 98s | 13 | 64s | 0 |
+| ON  | ✓ | 107s | 20 | 76s | 3 |
+
+Real effect on this easy task: planning is a **modest net cost** — +9% wall,
++19% LLM time, +54% LLM calls, **no outcome benefit** (both succeed). The
+overhead is the extra `write_todos` + reasoning rounds; unlike picobay's
+`update_plan`, deepagents' flat `write_todos` does **not** reduce redundant
+verification, so there's no offsetting saving. **The decline-default-ON verdict
+stands, but the magnitude is ~10–20%, not 3×.** Caveats: n=1/arm (variance
+unmeasured); hard-site case still not cleanly measured (oscar-films is
+rate-limit/latency-bound in this env). A 3-trial confirmation would firm it up.
