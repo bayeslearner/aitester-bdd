@@ -286,3 +286,9 @@ verification, so there's no offsetting saving. **The decline-default-ON verdict
 stands, but the magnitude is ~10–20%, not 3×.** Caveats: n=1/arm (variance
 unmeasured); hard-site case still not cleanly measured (oscar-films is
 rate-limit/latency-bound in this env). A 3-trial confirmation would firm it up.
+
+**DEFAULT FLIPPED → OFF (2026-06-15).** Acting on the verdict, `_planning_enabled()`
+now defaults OFF — planning is **opt-in** via `AITESTER_PLANNING=1|true|on|yes`.
+This supersedes D4's original "default true". (D1/D2/D3/D4 machinery unchanged;
+only the default value flipped.) Verified: default-off across all env values,
+ruff clean, 38 tests pass.

@@ -84,9 +84,11 @@ a guessed selector with a content getter.
 def _planning_enabled() -> bool:
     """Kill-switch for write_todos planning guidance (spec D4).
 
-    Default ON. Only the literal env values "false" / "0" (case-insensitive,
-    trimmed) disable it. Any other value — including unset — leaves planning
-    enabled.
+    Default OFF (flipped 2026-06-15 on the spec-01 eval verdict: planning is a
+    ~10-20% net cost on simple authoring with no benefit; opt-in for hard
+    tasks). Enabled ONLY when AITESTER_PLANNING is an explicit truthy value
+    ("true"/"1"/"on"/"yes", case-insensitive, trimmed). Unset or anything else
+    leaves planning OFF.
 
     The spec also mentions an RF ``${ENABLE_PLANNING}`` variable. Wiring that
     cleanly would require threading a new parameter through AITester.py and the
@@ -95,7 +97,7 @@ def _planning_enabled() -> bool:
     # TODO(spec-01): RF-variable ${ENABLE_PLANNING} wiring (env-only today).
     """
     val = os.environ.get("AITESTER_PLANNING", "").strip().lower()
-    return val not in ("false", "0")
+    return val in ("true", "1", "on", "yes")
 
 
 @contextlib.contextmanager
