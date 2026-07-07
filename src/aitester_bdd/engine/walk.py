@@ -39,6 +39,7 @@ Position determines wait behavior and failure scope.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from typing import TYPE_CHECKING, Any
@@ -520,7 +521,17 @@ def _eval_action(browser: BrowserAdapter, action: Action, *, scope: str = "") ->
     elif kind == "wait_idle":
         browser.wait_for_idle()
     elif kind == "screenshot":
-        browser.screenshot(action.options.get("filename"))
+        # Default into the RF output dir — a bare filename would otherwise
+        # write to CWD (backend-dependent). An absolute path is honored as-is.
+        from pathlib import Path
+
+        from aitester_bdd.engine.emit import _output_dir
+        raw = action.options.get("filename")
+        if raw and str(raw).startswith("/"):
+            fname = str(raw)
+        else:
+            fname = str(_output_dir() / Path(str(raw or "screenshot.png")).name)
+        browser.screenshot(fname)
     elif kind == "js":
         # Returns "__NAVIGATED__" if JS triggered page change (handled, not raised).
         browser.evaluate_js(action.value)
@@ -1661,6 +1672,39 @@ def _write_artifacts(verification: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
+class NullBrowserError(RuntimeError):
+    """Raised when the walker would run against a stub/uninitialized browser.
+
+    INV-4: a NullBrowser run is a FAILURE, never a silent PASS. Refusing to
+    start is the only honest outcome — actions would no-op and assertions
+    would read empty state, so the suite would report a meaningless green.
+    """
+
+
+def _assert_real_browser(browser: BrowserAdapter) -> None:
+    """Fail loudly before any scenario if the backend can't actually drive.
+
+    Each backend exposes `preflight() -> (ok, reason)`. A backend without one
+    (e.g. the FakeBrowser used in unit tests) is trusted and skipped. Set
+    AITESTER_ALLOW_STUB_BROWSER=1 to bypass (intended only for tests that
+    deliberately drive a stub)."""
+    if os.environ.get("AITESTER_ALLOW_STUB_BROWSER", "").strip() in ("1", "true", "yes"):
+        return
+    preflight = getattr(browser, "preflight", None)
+    if preflight is None:
+        return
+    try:
+        ok, reason = preflight()
+    except Exception as exc:  # never let preflight itself mask a real driver
+        log.debug("browser preflight raised, treating as OK: %s", exc)
+        return
+    if not ok:
+        raise NullBrowserError(
+            "aitester-bdd: browser preflight FAILED — refusing to run so a "
+            "stub browser cannot report a silent PASS (INV-4).\n  " + reason
+        )
+
+
 def _run_state_setup(browser: BrowserAdapter, verification: Verification) -> None:
     """Execute suite-level state setup (auth, consent) before any scenario.
 
@@ -1703,17 +1747,19 @@ def _run_state_setup(browser: BrowserAdapter, verification: Verification) -> Non
     browser.wait_for_load_state("networkidle", timeout="10s")
 
 
-def _build_default_registry(walk_log: Any, ctx: WalkContext):
+def _build_default_registry(walk_log: Any, ctx: WalkContext, browser: Any = None):
     """Wire up the standard aspects: trajectory recording, AI failure
-    diagnosis, slow-action instrumentation, step delay.
+    diagnosis, slow-action instrumentation, step delay, screenshot trail.
 
     Aspect disabling is controlled by ctx.disabled_aspects (resolved from
-    AITESTER_DISABLE_ASPECTS env var at WalkContext construction time)."""
+    AITESTER_DISABLE_ASPECTS env var at WalkContext construction time).
+    `browser` is required only for the screenshot-every-step aspect."""
     from aitester_bdd.engine.aspects import AspectRegistry
     from aitester_bdd.engine.emit import _output_dir
     from aitester_bdd.engine.walk_log import (
         make_diagnose_aspect,
         make_instrument_aspect,
+        make_screenshot_aspect,
         make_step_delay_aspect,
         make_trajectory_aspect,
     )
@@ -1724,6 +1770,8 @@ def _build_default_registry(walk_log: Any, ctx: WalkContext):
         registry.register(make_trajectory_aspect(walk_log))
     if "instrument" not in disabled:
         registry.register(make_instrument_aspect())
+    if ctx.shot_every_step and browser is not None and "screenshot" not in disabled:
+        registry.register(make_screenshot_aspect(browser, _output_dir))
     if "diagnose" not in disabled:
         registry.register(
             make_diagnose_aspect(
@@ -1767,10 +1815,11 @@ def walk_verification(verification: Verification, ctx: WalkContext | None = None
     run_deadline = time.time() + ctx.run_timeout_s if ctx.run_timeout_s else None
 
     walk_log = WalkLog(sink_path=_output_dir() / "walk_log.jsonl")
-    registry = _build_default_registry(walk_log, ctx)
 
     verdict = Verdict(verification_name=verification.name)
     browser = BrowserAdapter()
+    _assert_real_browser(browser)
+    registry = _build_default_registry(walk_log, ctx, browser)
     browser.new_session(headless=not ctx.headed)
     try:
         # Suite-level state setup (auth, consent) — runs once before any

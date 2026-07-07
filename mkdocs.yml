@@ -37,6 +37,7 @@ nav:
       - Actions: guide/actions.md
       - Configuration: guide/configuration.md
       - Running Tests: guide/running-tests.md
+      - Running a Suite (Start to Finish): guide/running-a-suite.md
   - How It Works:
       - Architecture Overview: internals/architecture.md
       - The Plan-Then-Execute Model: internals/plan-then-execute.md

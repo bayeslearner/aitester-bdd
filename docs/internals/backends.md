@@ -36,7 +36,7 @@ All backends expose these methods (the walker calls only these):
 | Action | `click(css)`, `click_text(text)`, `double_click(css)`, `type(css, value)`, `select(css, value)`, `check(css)`, `uncheck(css)`, `hover(css)`, `focus(css)`, `press(css, keys)`, `upload(css, path)`, `scroll()` |
 | Special | `screenshot(path)`, `evaluate_js(script)`, `resolve_fallback_selector(css, scope)` |
 
-## agent-browser (default)
+## agent-browser (zero-install)
 
 Every method is a subprocess call to the `agent-browser` CLI:
 

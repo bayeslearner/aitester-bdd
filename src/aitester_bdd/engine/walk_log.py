@@ -266,6 +266,45 @@ def make_step_delay_aspect(delay_ms: int):
     return Aspect(name="step_delay", after_action=after_action)
 
 
+def make_screenshot_aspect(browser: Any, output_dir_fn: Any):
+    """Aspect that captures a numbered PNG after every action and every rule.
+
+    Wired when AITESTER_SHOT_EVERY_STEP is truthy (or the suite opts in).
+    Files land as ``<output_dir>/step_NNNN_<rule>_<action>.png`` so a passing
+    run leaves a visual trail of the whole journey — the gap that made
+    'show me the screenshots' unanswerable before. Best-effort: a failed
+    capture is logged at debug and never breaks the walk.
+    """
+    import re as _re
+
+    from aitester_bdd.engine.aspects import Aspect
+
+    state = {"n": 0}
+
+    def _slug(s: str) -> str:
+        return _re.sub(r"[^A-Za-z0-9._-]+", "-", (s or "")).strip("-")[:40] or "x"
+
+    def _shot(tag: str) -> None:
+        state["n"] += 1
+        try:
+            path = output_dir_fn() / f"step_{state['n']:04d}_{_slug(tag)}.png"
+            browser.screenshot(str(path))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("shot-every-step capture failed: %s", exc)
+
+    def after_action(rule, action, dt_seconds, raised):
+        _shot(f"{rule.name}_{action.kind}")
+
+    def after_rule(verification, scenario, rule, rule_result):
+        _shot(f"{rule.name}_end")
+
+    return Aspect(
+        name="screenshot",
+        after_action=after_action,
+        after_rule=after_rule,
+    )
+
+
 def make_diagnose_aspect(get_llm: Any, output_dir_fn: Any, get_story: Any | None = None):
     """Aspect that calls llm.diagnose on rule failure.
 

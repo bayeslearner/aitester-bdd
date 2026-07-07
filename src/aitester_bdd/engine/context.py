@@ -26,6 +26,7 @@ class WalkContext:
     step_delay_ms: int = 0
     run_timeout_s: int = 300
     disabled_aspects: frozenset[str] = field(default_factory=frozenset)
+    shot_every_step: bool = False
 
     @classmethod
     def from_env(cls) -> WalkContext:
@@ -38,9 +39,11 @@ class WalkContext:
             for a in os.environ.get("AITESTER_DISABLE_ASPECTS", "").split(",")
             if a.strip()
         )
+        shot_every_step = os.environ.get("AITESTER_SHOT_EVERY_STEP", "").strip() in ("1", "true", "yes")
         return cls(
             headed=headed,
             step_delay_ms=step_delay_ms,
             run_timeout_s=run_timeout_s,
             disabled_aspects=disabled,
+            shot_every_step=shot_every_step,
         )

@@ -25,8 +25,10 @@ Trade-offs:
     `agent-browser eval` JS rather than a first-class element-state
     API, because the CLI surface doesn't expose those directly.
 
-Enabled by `AITESTER_BROWSER=agent-browser` (this is the default since
-it has the lowest install friction).
+Enabled by `AITESTER_BROWSER=agent-browser`. NOTE: the project default is
+`playwright` (see `browser.BrowserAdapter`); this backend is the
+lowest-install-friction alternative — it ships its own browser, so no
+`rfbrowser init` and no system Chrome/Edge required.
 """
 from __future__ import annotations
 
@@ -81,6 +83,21 @@ class AgentBrowserBackend:
         import uuid
         self._session = os.environ.get("AITESTER_RUN_SESSION") or f"aitester-run-{uuid.uuid4().hex[:8]}"
         self._headed = os.environ.get("AITESTER_HEADED", "").strip() in ("1", "true", "yes")
+
+    def preflight(self) -> tuple[bool, str]:
+        """Return (ok, reason). NOT ok when the `agent-browser` CLI is not on
+        PATH — without it every action would raise a cryptic RuntimeError
+        mid-run. Fail loud up front instead."""
+        import shutil
+        if shutil.which("agent-browser") is None:
+            return (
+                False,
+                "agent-browser CLI not found on PATH — the agent-browser "
+                "backend cannot drive anything. Fix: install it "
+                "(`npm i -g @bayeslearner/agent-browser`), or set "
+                "AITESTER_BROWSER=playwright and run `aitester init-browser`.",
+            )
+        return (True, "")
 
     # ------------------------------------------------------------------
     # CLI bridge

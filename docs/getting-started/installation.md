@@ -6,13 +6,17 @@
 pip install aitester-bdd
 ```
 
-This gives you the keyword library, walker, CLI, and the default `agent-browser` backend.
+This gives you the keyword library, walker, CLI, and the zero-install `agent-browser` backend.
 
 ## Runtime backends
 
-aitester-bdd supports three browser backends. The base install uses `agent-browser` (zero-install, same driver for authoring and running). Optional extras enable the others:
+aitester-bdd supports three browser backends. The **runtime default** (when a
+suite declares no `${ENGINE}` and `AITESTER_BROWSER` is unset) is `playwright`,
+which needs a one-time `aitester init-browser`. The `agent-browser` backend is
+the zero-install option and the default engine that `aitester author` declares
+in the suites it writes. Optional extras enable the others:
 
-### agent-browser (default)
+### agent-browser (zero-install)
 
 ```bash
 npm i -g agent-browser

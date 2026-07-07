@@ -81,6 +81,32 @@ a guessed selector with a content getter.
 # to the pre-spec prompts.
 
 
+# Appended to the explore prompts when AITESTER_SHOT_EVERY_STEP is set, so a
+# fluid run leaves a visual trail. Two variants: the in-RF path has a dedicated
+# browser_screenshot tool; the standalone CLI path shells out to agent-browser.
+_EXPLORE_SHOT_BLOCK_RF = """
+
+## Screenshot trail (REQUIRED this run)
+Screenshot mode is ON. Call `browser_screenshot(label="...")` at EVERY journey
+milestone: right after the initial snapshot, after login, after each navigation,
+after each key action (click/fill/submit), and at the final verified state. Use a
+short label describing the moment. These PNGs are the visual proof of the journey.
+"""
+
+_EXPLORE_SHOT_BLOCK_CLI = """
+
+## Screenshot trail (REQUIRED this run)
+Screenshot mode is ON. After EVERY milestone (initial page, post-login, each
+navigation, each key action, final state) run
+`agent-browser screenshot aitester-shot-<n>.png` (increment <n> each time,
+starting at 1). These PNGs are the visual proof of the journey.
+"""
+
+
+def _shot_every_step_enabled() -> bool:
+    return os.environ.get("AITESTER_SHOT_EVERY_STEP", "").strip().lower() in ("1", "true", "on", "yes")
+
+
 def _planning_enabled() -> bool:
     """Kill-switch for write_todos planning guidance (spec D4).
 
@@ -319,7 +345,15 @@ def _build_llm():
     """
     from langchain_openai import ChatOpenAI
 
-    model = os.environ.get("AITESTER_LLM_MODEL", DEFAULT_MODEL)
+    from aitester_bdd.llm.config import strip_openai_prefix, validate_llm_env
+
+    # Fail loud on blank/malformed creds instead of deep in the HTTP client.
+    validate_llm_env()
+
+    # ChatOpenAI talks to the OpenAI-compatible endpoint directly, so it wants
+    # the model WITHOUT a litellm ``openai/`` prefix. Strip it if the user set
+    # AITESTER_LLM_MODEL in the litellm format (same var feeds both paths).
+    model = strip_openai_prefix(os.environ.get("AITESTER_LLM_MODEL", DEFAULT_MODEL))
     base_url = os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL)
     api_key = os.environ.get("OPENAI_API_KEY", DEFAULT_API_KEY)
 
@@ -642,7 +676,7 @@ def explore_with_agent(
         # Disabled path returns the untouched constant (byte-identical).
         system_prompt = PLAYWRIGHT_EXPLORE_PROMPT + (
             _EXPLORE_PLANNING_BLOCK if _planning_enabled() else ""
-        )
+        ) + (_EXPLORE_SHOT_BLOCK_RF if _shot_every_step_enabled() else "")
         backend = None
     else:
         # Fallback: agent-browser CLI via shell (standalone / aitester author)
@@ -651,7 +685,9 @@ def explore_with_agent(
         from aitester_bdd.authoring.tools import session_id
 
         tools = terminal_tools
-        system_prompt = _explore_system_prompt()
+        system_prompt = _explore_system_prompt() + (
+            _EXPLORE_SHOT_BLOCK_CLI if _shot_every_step_enabled() else ""
+        )
         browser_session = session or session_id()
         backend_env = dict(os.environ)
         backend_env["AGENT_BROWSER_SESSION"] = browser_session

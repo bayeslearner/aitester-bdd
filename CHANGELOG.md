@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-07
+
+Honesty & legibility pass — the harness can no longer silently lie about its
+own verdict, its failures name their fix, and the happy path is documented.
+None of these changes constrain what a consuming agent may do with a suite;
+they make the right path obvious and misuse self-diagnosing.
+
+### Fixed
+
+- **NullBrowser silent-pass trap (INV-4).** `walk_verification` now calls each
+  backend's `preflight()` before any scenario and **refuses to run** against a
+  stub/uninitialized browser (RF-Browser not initialized, `agent-browser` CLI
+  missing, no Chrome/Edge for nodriver) — raising `NullBrowserError` with a
+  one-line remedy instead of reporting PASS having done nothing. Bypass with
+  `AITESTER_ALLOW_STUB_BROWSER=1` (tests only).
+- **`BrowserAdapter` docstring / doctor mismatch.** Docstrings and `aitester
+  doctor` said `agent-browser` was the default while the code defaults to
+  `playwright`. Now consistent (`playwright` is the default).
+- **`When I take screenshot` wrote to CWD** unless given an absolute path — now
+  defaults into the RF output dir.
+
+### Added
+
+- **`preflight()` on every backend** — `(ok, reason)` health check used by the
+  fail-loud gate above.
+- **LLM config validation** — blank/malformed `AITESTER_LLM_MODEL` /
+  `OPENAI_BASE_URL` / `OPENAI_API_KEY` (e.g. a base URL that is just `/v1`) now
+  fail loudly at fluid-run start, naming the exact variable and an example
+  value, instead of dying deep in an HTTP client.
+- **Model-prefix normalization** — one `AITESTER_LLM_MODEL` value works for both
+  the langchain explore agent (wants bare `cc/...`) and the litellm judge (wants
+  `openai/cc/...`); aitester strips/adds the `openai/` prefix per consumer.
+- **`aitester doctor` upgrades** — reports the Python interpreter + flags a dead
+  venv; runs an **agent-browser command-shape smoke test** (`open`,
+  `snapshot -c -i --json`, `get count/text`, `click`, `type`, `press`,
+  `screenshot`) against a local `data:` URL to catch CLI drift. `--no-smoke`
+  skips it for headless CI.
+- **Screenshot trail** — `AITESTER_SHOT_EVERY_STEP=1` captures a numbered PNG
+  after every action/rule (pinned walk, via a new `screenshot` aspect) and at
+  each milestone (fluid explore, via a `browser_screenshot` tool + prompt).
+- **Docs** — new "Running a Suite, Start to Finish" guide: env contract, the
+  two modes, the doctor, the screenshot trail, and the top failure messages
+  with their fixes. env-vars reference updated.
+
 ## [0.3.0] - 2026-05-20
 
 ### Changed

@@ -210,10 +210,110 @@ def run(
     raise typer.Exit(code=rc)
 
 
+def _smoke_agent_browser() -> tuple[bool, list[str]]:
+    """Drive `agent-browser` through the exact command shapes the runtime
+    backend depends on, against a self-contained data: URL (no network).
+
+    Returns (ok, lines). Catches the real drift modes: a `get count` that
+    prints "count: 3" instead of "3", a `type`/`get text` selector-form
+    mismatch, a missing `screenshot` subcommand, etc.
+    """
+    import tempfile
+    import uuid
+
+    session = f"aitester-doctor-{uuid.uuid4().hex[:6]}"
+    html = (
+        "data:text/html,"
+        "<button id=b>hi</button>"
+        "<input id=i><span class=n>x</span><span class=n>y</span>"
+    )
+    lines: list[str] = []
+    ok = True
+
+    def _ab(*args: str, timeout: int = 30) -> tuple[int, str, str]:
+        r = subprocess.run(
+            ["agent-browser", "--session", session, *args],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
+
+    def _check(label: str, cond: bool, got: str) -> None:
+        nonlocal ok
+        if cond:
+            lines.append(f"    ✓ {label}")
+        else:
+            ok = False
+            lines.append(f"    ✗ {label} — got: {got[:80]!r}")
+
+    shot = str(Path(tempfile.gettempdir()) / f"{session}.png")
+    try:
+        rc, out, err = _ab("open", html, timeout=60)
+        _check("open <url>", rc == 0, err or out)
+        rc, out, err = _ab("snapshot", "-c", "-i", "--json")
+        _check("snapshot -c -i --json", rc == 0 and bool(out), err or out)
+        rc, out, err = _ab("get", "count", "#b")
+        _check("get count <css> → parseable int", any(c.isdigit() for c in out), out)
+        rc, out, err = _ab("get", "text", "#b")
+        _check("get text <css>", rc == 0 and "hi" in out, err or out)
+        rc, out, err = _ab("type", "#i", "hello")
+        _check("type <css> <val>", rc == 0, err or out)
+        rc, out, err = _ab("click", "#b")
+        _check("click <css>", rc == 0, err or out)
+        rc, out, err = _ab("press", "Escape")
+        _check("press <key>", rc == 0, err or out)
+        rc, out, err = _ab("screenshot", shot)
+        _check("screenshot <path>", rc == 0 and Path(shot).exists(), err or out)
+    except subprocess.TimeoutExpired:
+        ok = False
+        lines.append("    ✗ smoke test timed out (agent-browser hung)")
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+        lines.append(f"    ✗ smoke test error: {type(exc).__name__}: {exc}")
+    finally:
+        try:
+            _ab("close", timeout=10)
+        except Exception:
+            pass
+        try:
+            Path(shot).unlink(missing_ok=True)
+        except Exception:
+            pass
+    return ok, lines
+
+
 @app.command()
-def doctor() -> None:
+def doctor(
+    smoke: bool = typer.Option(
+        True, "--smoke/--no-smoke",
+        help="Run the agent-browser command-shape smoke test (launches a browser "
+             "against a local data: URL). Use --no-smoke in headless CI.",
+    ),
+) -> None:
     """Check environment readiness."""
     typer.echo("aitester-bdd doctor:")
+
+    # Python interpreter — surfaces a dead venv (the consumer's .venv-e2e
+    # pointing at a since-deleted interpreter fails with a bare 'bad
+    # interpreter' and nothing says so). If we're running at all our own
+    # sys.executable resolves, but report it explicitly + flag a venv whose
+    # base prefix vanished.
+    exe = Path(sys.executable)
+    venv = os.environ.get("VIRTUAL_ENV")
+    py_ver = ".".join(str(x) for x in sys.version_info[:3])
+    if exe.exists():
+        typer.echo(f"  ✓ python {py_ver} at {exe}")
+    else:
+        typer.echo(f"  ✗ python interpreter path does not exist: {exe} (dead venv?)")
+    if venv:
+        vpy = Path(venv) / "bin" / "python"
+        if vpy.exists() or exe.exists():
+            typer.echo(f"  ✓ virtualenv: {venv}")
+        else:
+            typer.echo(
+                f"  ✗ VIRTUAL_ENV={venv} but its interpreter is missing — "
+                f"recreate it (`python -m venv {venv}` or `uv venv {venv}`)"
+            )
+
     try:
         import robot
         typer.echo(f"  ✓ robotframework {robot.__version__}")
@@ -245,20 +345,39 @@ def doctor() -> None:
     except ImportError as e:
         typer.echo(f"  ✗ playwright explorer: {e}")
 
-    chosen = os.environ.get("AITESTER_BROWSER", "agent-browser").lower()
-    typer.echo(f"  ℹ AITESTER_BROWSER={chosen} (default: agent-browser)")
+    chosen = os.environ.get("AITESTER_BROWSER", "playwright").lower()
+    typer.echo(f"  ℹ AITESTER_BROWSER={chosen} (default: playwright)")
 
     # agent-browser RUNTIME backend.
+    agent_browser_present = False
     try:
         r = subprocess.run(["agent-browser", "--version"], capture_output=True, text=True, timeout=5)
         ver = r.stdout.strip() or r.stderr.strip()
         typer.echo(f"  ✓ agent-browser runtime backend: {ver} (zero install)")
+        agent_browser_present = True
     except FileNotFoundError:
         tag = "⚠" if chosen == "agent-browser" else "ℹ"
         typer.echo(
             f"  {tag} agent-browser runtime backend: CLI not found "
-            f"(install: `npm i -g agent-browser`)"
+            f"(install: `npm i -g @bayeslearner/agent-browser`)"
         )
+
+    # Command-shape smoke test — verifies the exact subcommands the backend
+    # shells out to still behave as expected (guards against CLI drift).
+    if agent_browser_present and smoke:
+        typer.echo("    running agent-browser command-shape smoke test...")
+        sm_ok, sm_lines = _smoke_agent_browser()
+        for ln in sm_lines:
+            typer.echo(ln)
+        if sm_ok:
+            typer.echo("    ✓ agent-browser command shapes OK")
+        else:
+            typer.echo(
+                "    ⚠ agent-browser command shapes DRIFTED — the backend may "
+                "misbehave; check your agent-browser version"
+            )
+    elif agent_browser_present and not smoke:
+        typer.echo("    ℹ agent-browser smoke test skipped (--no-smoke)")
 
     # Playwright backend status
     try:

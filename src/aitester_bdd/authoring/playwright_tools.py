@@ -80,6 +80,10 @@ class WaitParams(BaseModel):
     timeout_ms: int = Field(default=10000, description="Timeout in milliseconds")
 
 
+class ScreenshotParams(BaseModel):
+    label: str = Field(default="", description="Short milestone label used in the screenshot filename (e.g. 'after-login', 'case-detail').")
+
+
 # ---------------------------------------------------------------------------
 # Tool implementations — all delegate to the shared RF Browser
 # ---------------------------------------------------------------------------
@@ -222,6 +226,28 @@ def _wait_for(selector: str, timeout_ms: int = 10000) -> str:
     return json.dumps({"success": ok, "selector": selector})
 
 
+_shot_counter = {"n": 0}
+
+
+def _capture_screenshot(label: str = "") -> str:
+    """Capture a numbered PNG of the current page into the RF output dir.
+
+    Gives the fluid explore agent a way to leave a visual trail — the missing
+    piece that made a passing fluid run produce zero screenshots."""
+    import re as _re
+
+    from aitester_bdd.engine.emit import _output_dir
+    b = _get_backend()
+    _shot_counter["n"] += 1
+    slug = _re.sub(r"[^A-Za-z0-9._-]+", "-", label or "").strip("-")[:40] or "milestone"
+    path = _output_dir() / f"explore_{_shot_counter['n']:04d}_{slug}.png"
+    try:
+        b.screenshot(str(path))
+        return json.dumps({"success": True, "path": str(path)})
+    except Exception as e:  # noqa: BLE001
+        return json.dumps({"success": False, "error": str(e)})
+
+
 # ---------------------------------------------------------------------------
 # Build tool list for the explore agent
 # ---------------------------------------------------------------------------
@@ -281,6 +307,11 @@ def build_playwright_browser_tools() -> list[StructuredTool]:
             func=_wait_for, name="browser_wait",
             args_schema=WaitParams,
             description="Wait for an element to appear in the DOM (conditional wait, returns immediately if already present)",
+        ),
+        StructuredTool.from_function(
+            func=_capture_screenshot, name="browser_screenshot",
+            args_schema=ScreenshotParams,
+            description="Capture a numbered PNG of the current page into the output dir. Call at each journey milestone (after login, after navigation, after each key action, at final state) so the run leaves a visual trail. `label` is a short description used in the filename.",
         ),
     ]
 

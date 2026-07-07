@@ -227,8 +227,9 @@ Auth Flow                # one rule per test case OR rules grouped into one case
 Case Approval Roundtrip  # the intention being verified
 ```
 
-`${ENGINE}` selects the runtime backend: `agent-browser` (default,
-zero install at run time), `playwright` (faster but needs `rfbrowser
+`${ENGINE}` selects the runtime backend: `agent-browser` (default
+authored engine, zero install at run time), `playwright` (the runtime
+default when no `${ENGINE}` is declared; faster but needs `rfbrowser
 init`), or `nodriver` (bot-resistant, needs `aitester-bdd[stealth]`).
 Exploration is always Playwright regardless of this value.
 

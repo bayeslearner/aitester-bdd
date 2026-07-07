@@ -111,7 +111,15 @@ DEFAULT_API_KEY = "placeholder"  # claude-code-proxy ignores the key
 
 
 def _resolve_model(explicit: str | None) -> str:
-    return explicit or os.environ.get("AITESTER_LLM_MODEL", DEFAULT_MODEL)
+    """Resolve the litellm model spec.
+
+    litellm wants a provider-prefixed spec (``openai/cc/...``). The same
+    AITESTER_LLM_MODEL var also feeds the langchain path, which wants the bare
+    name — so a user may have set either format. Normalize to the prefixed form
+    here so the judge/finalize path always dispatches correctly."""
+    from aitester_bdd.llm.config import ensure_openai_prefix
+    raw = explicit or os.environ.get("AITESTER_LLM_MODEL", DEFAULT_MODEL)
+    return ensure_openai_prefix(raw)
 
 
 def _ensure_proxy_env() -> None:

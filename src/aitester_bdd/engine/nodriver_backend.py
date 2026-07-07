@@ -95,6 +95,19 @@ class NodriverBackend:
         self._last_response_status: int | None = None
         self._last_response_body: str = ""
 
+    def preflight(self) -> tuple[bool, str]:
+        """Return (ok, reason). NOT ok when no Chrome/Edge binary is found —
+        nodriver drives a real installed browser over CDP."""
+        if _find_browser_binary() is None:
+            return (
+                False,
+                "nodriver backend found no Chrome/Edge binary on this system "
+                "to drive over CDP. Fix: install Chrome or Edge, or set "
+                "AITESTER_BROWSER=agent-browser (ships its own browser) / "
+                "AITESTER_BROWSER=playwright + `aitester init-browser`.",
+            )
+        return (True, "")
+
     # ------------------------------------------------------------------
     # Async bridge — nodriver is async; we run our own loop.
     # ------------------------------------------------------------------

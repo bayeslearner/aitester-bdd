@@ -59,7 +59,20 @@ _NAV_ERROR_HINTS = (
 
 
 class _NullBrowser:
-    """No-op browser used when robotframework-browser isn't available."""
+    """No-op browser used when robotframework-browser isn't available.
+
+    Every method silently "succeeds" and returns "". This is intentional
+    for unit tests that never touch a real page — but in a REAL run it is a
+    trap: actions no-op in 0ms and assertions read empty state, so negative
+    checks pass against a page that never loaded. `walk_verification` calls
+    each backend's `preflight()` before any scenario and REFUSES to run when
+    a stub is detected (INV-4: a NullBrowser run is a FAILURE, never a silent
+    PASS). See `_PlaywrightBackend.preflight`.
+    """
+
+    #: Sentinel so backends/preflight can detect the stub without importing
+    #: this private class name everywhere.
+    is_null_browser = True
 
     def __getattr__(self, name: str):
         def noop(*args: Any, **kw: Any):
@@ -72,22 +85,27 @@ class _NullBrowser:
 def BrowserAdapter():
     """Factory — returns the configured backend.
 
-    `AITESTER_BROWSER` selects which:
+    `AITESTER_BROWSER` selects which (DEFAULT: `playwright`):
 
-      - `agent-browser` (default) → AgentBrowserBackend. Same CLI as
-        the Explore phase, so author-time and run-time DOM views are
-        identical. Zero install friction (the CLI ships its own browser).
-        Slower per action (subprocess), but fine for most tests.
+      - `playwright` (default) → _PlaywrightBackend (rfbrowser/Playwright).
+        In-process speed for action-heavy tests. Requires a one-time
+        `aitester init-browser` (`rfbrowser init`). WITHOUT that init the
+        RF Browser library is unimportable and this backend would fall back
+        to a `_NullBrowser` stub — which `preflight()` now detects and fails
+        loudly on, rather than reporting a silent PASS (INV-4).
 
-      - `playwright` → _PlaywrightBackend (rfbrowser/Playwright). In-process
-        speed for action-heavy tests. Requires `aitester init-browser`.
+      - `agent-browser` → AgentBrowserBackend. Same CLI as the Explore
+        phase, so author-time and run-time DOM views are identical. Zero
+        install friction (the CLI ships its own browser). Slower per action
+        (subprocess), but fine for most tests.
 
       - `nodriver` → NodriverBackend (raw CDP via Chrome/Edge). For sites
         with bot-detection that targets Playwright, or to skip rfbrowser
         init when Chrome/Edge is already installed. Needs
         `pip install aitester-bdd[stealth]`.
 
-    All three expose the same public surface; the walker is backend-agnostic.
+    All expose the same public surface (including `preflight()`); the walker
+    is backend-agnostic.
     """
     import os
 
@@ -97,7 +115,9 @@ def BrowserAdapter():
         return NodriverBackend()
     if choice == "playwright":
         return _PlaywrightBackend()
-    # Default: agent-browser CLI.
+    # agent-browser CLI backend (chosen when AITESTER_BROWSER=agent-browser).
+    # NB: the unset-env default is `playwright`, handled above — this is the
+    # explicit-opt-in / fallback branch, not the default.
     from aitester_bdd.engine.agent_browser_backend import AgentBrowserBackend
     return AgentBrowserBackend()
 
@@ -150,6 +170,25 @@ class _PlaywrightBackend:
                 )
                 self._rfb = _NullBrowser()
         return self._rfb
+
+    def preflight(self) -> tuple[bool, str]:
+        """Return (ok, reason). NOT ok when the live driver is a NullBrowser
+        stub — i.e. robotframework-browser is unavailable / uninitialized.
+
+        Called once by `walk_verification` before any scenario so a stub run
+        fails loudly instead of reporting a silent PASS (INV-4)."""
+        b = self._rf_browser()
+        if isinstance(b, _NullBrowser) or getattr(b, "is_null_browser", False):
+            return (
+                False,
+                "RF-Browser not initialized (robotframework-browser is "
+                "unavailable), so every action would no-op and assertions "
+                "would read empty state. Fix: run `aitester init-browser` "
+                "(one-time `rfbrowser init`), or set "
+                "AITESTER_BROWSER=agent-browser to use the zero-install CLI "
+                "backend.",
+            )
+        return (True, "")
 
     # ------------------------------------------------------------------
     # Lifecycle — usually managed by RF Suite Setup; safe no-ops if RF
