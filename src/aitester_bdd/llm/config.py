@@ -85,6 +85,62 @@ def resolve_llm_config(
         api_key = api_key or DEFAULT_API_KEY
     return model, base_url, api_key
 
+
+# litellm provider prefix → langchain `init_chat_model` model_provider. The
+# fluid agent uses `init_chat_model` (multi-provider), so a litellm-style
+# ``provider/model`` spec must map onto langchain's provider name.
+_LITELLM_TO_LANGCHAIN_PROVIDER = {
+    "openai": "openai",
+    "anthropic": "anthropic",
+    "azure": "azure_openai",
+    "azure_ai": "azure_openai",
+    "bedrock": "bedrock_converse",
+    "vertex_ai": "google_vertexai",
+    "gemini": "google_genai",
+    "ollama": "ollama",
+    "openrouter": "openai",  # OpenAI-compatible — pair with base_url
+    "groq": "groq",
+    "mistral": "mistralai",
+    "cohere": "cohere",
+    "together_ai": "together",
+    "fireworks_ai": "fireworks",
+    "deepseek": "deepseek",
+    "xai": "xai",
+    "huggingface": "huggingface",
+}
+
+
+def split_provider(model: str) -> tuple[str, str]:
+    """Split a litellm-style ``provider/model`` spec into
+    ``(langchain_provider, bare_model)`` for `init_chat_model`.
+
+    A spec with no recognized provider prefix (e.g. the default ``cc/…`` proxy
+    model) is assumed to be an OpenAI-compatible endpoint → provider ``openai``,
+    model unchanged.
+    """
+    head = model.split("/", 1)[0]
+    if head in _LITELLM_TO_LANGCHAIN_PROVIDER and "/" in model:
+        return _LITELLM_TO_LANGCHAIN_PROVIDER[head], model.split("/", 1)[1]
+    return "openai", model
+
+
+def resolve_chat_model(
+    *, model: str | None = None, base_url: str | None = None, api_key: str | None = None,
+) -> tuple[str, str, str | None, str | None]:
+    """Resolve everything `init_chat_model` needs for the fluid agent:
+    ``(provider, model, base_url, api_key)``.
+
+    Composes `resolve_llm_config` (precedence + proxy defaults) with
+    `split_provider` (litellm prefix → langchain provider). For non-proxy
+    providers, base_url/api_key come back ``None`` so the provider's own
+    LangChain integration resolves creds from its native env.
+    """
+    model, base_url, api_key = resolve_llm_config(
+        model=model, base_url=base_url, api_key=api_key,
+    )
+    provider, bare_model = split_provider(model)
+    return provider, bare_model, base_url, api_key
+
 # Recognized litellm provider prefixes — if the model already starts with one
 # of these it is left untouched (the user chose their provider explicitly).
 _LITELLM_PROVIDERS = (

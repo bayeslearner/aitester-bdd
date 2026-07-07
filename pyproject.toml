@@ -1,6 +1,6 @@
 [project]
 name = "aitester-bdd"
-version = "0.4.1"
+version = "0.4.2"
 description = "LLM-driven BDD test authoring for Robot Framework — turn an intention + live app into a .robot suite"
 readme = "README.md"
 authors = [{ name = "kundeng" }]
@@ -58,6 +58,18 @@ playwright = [
 # Pick by installing this extra and declaring ${ENGINE}    nodriver in your suite.
 stealth = [
     "nodriver>=0.40",
+]
+# Native LLM providers for the fluid explore/author agent. The agent uses
+# LangChain's `init_chat_model`, so a non-OpenAI provider needs its integration
+# package. The base install ships `langchain-openai` (covers OpenAI-compatible
+# endpoints incl. the claude-code-proxy default). Add these for native access:
+#   pip install aitester-bdd[anthropic]   # then AITESTER_LLM_MODEL=anthropic/claude-...
+#   pip install aitester-bdd[google]      # then AITESTER_LLM_MODEL=gemini/gemini-...
+anthropic = [
+    "langchain-anthropic>=0.2",
+]
+google = [
+    "langchain-google-genai>=2.0",
 ]
 docs = [
     "mkdocs>=1.6",

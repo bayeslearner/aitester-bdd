@@ -41,8 +41,23 @@ Its own config uses **neutral, aitester-owned** names:
 `author_with_agent`) → `AITESTER_LLM_*` → legacy `OPENAI_BASE_URL` /
 `OPENAI_API_KEY` (**deprecated**, still honored) → for the default
 claude-code-proxy model (`cc/…`) the local-proxy defaults, otherwise **left
-unset so litellm / ChatOpenAI resolve creds from their own provider-native env**
+unset so the provider resolves creds from its own native env**
 (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …).
+
+**Multi-provider.** Both LLM paths are provider-agnostic. The model spec uses a
+litellm-style `provider/model` prefix; the default `cc/…` (no prefix) is treated
+as an OpenAI-compatible endpoint. The fluid agent uses LangChain's
+`init_chat_model`, so a **native** non-OpenAI provider needs its integration
+package — install the extra and set the model:
+
+| Provider | Install | Model example |
+|----------|---------|---------------|
+| OpenAI-compatible (default) | (base install) | `cc/claude-opus-4-7`, `openai/gpt-4o` |
+| Anthropic (native) | `pip install aitester-bdd[anthropic]` | `anthropic/claude-opus-4-8` |
+| Google Gemini (native) | `pip install aitester-bdd[google]` | `gemini/gemini-2.0-flash` |
+
+Any other LangChain-supported provider works too — install its
+`langchain-<provider>` package and use the matching `provider/model` prefix.
 
 If any LLM var is **set but blank/malformed**, the fluid agent fails loudly at
 start naming the exact variable and an example — it no longer dies deep inside

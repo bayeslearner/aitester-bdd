@@ -1,13 +1,10 @@
-"""LLMClient Protocol — the interface aitester-bdd needs from an LLM.
+"""LLMClient Protocol — the in-walker one-shot interface aitester-bdd needs.
 
-One adapter (AIAgentLLM, LiteLLM-backed) covers both uses:
-
-  AUTHORING — author/refine/ground_selector, called by the CLI to
-              generate .robot files from a story + snapshot.
-
-  IN-WALKER — judge/judge_visual, the escape-hatch state check the
-              walker calls for `semantic` / `visual_semantic` kinds
-              when deterministic checks can't express the assertion.
+The default adapter (`AIAgentLLM`, LiteLLM-backed) implements these NON-agentic
+calls the walker makes when a deterministic check can't express an assertion.
+The agentic explore/author loop is a separate concern — it uses
+`authoring.agent_loop` (deepagents + langgraph + `init_chat_model`), not this
+Protocol.
 """
 from __future__ import annotations
 
@@ -15,33 +12,7 @@ from typing import Protocol
 
 
 class LLMClient(Protocol):
-    """Minimal interface aitester-bdd needs from an LLM provider."""
-
-    # ------------------------------------------------------------------
-    # Authoring (CLI / standalone)
-    # ------------------------------------------------------------------
-
-    def author(
-        self, *, story: str, snapshot: str, skill: str, base_url: str,
-    ) -> str:
-        """Given a story + accessibility snapshot + skill grammar,
-        return a complete .robot suite as a string."""
-        ...
-
-    def refine(
-        self, *, suite: str, dryrun_output: str, latest_snapshot: str, skill: str,
-    ) -> str:
-        """Given a failing suite + dryrun output + fresh snapshot,
-        return a refined .robot suite that addresses the failure."""
-        ...
-
-    def ground_selector(
-        self, *, target_description: str, snapshot: str,
-    ) -> str | None:
-        """Given a description of a desired element and a current snapshot,
-        return the best CSS/aria selector visible in the snapshot, or
-        None if no suitable element is present."""
-        ...
+    """Minimal in-walker interface aitester-bdd needs from an LLM provider."""
 
     # ------------------------------------------------------------------
     # In-walker escape hatch

@@ -103,10 +103,23 @@ export OPENAI_BASE_URL=http://localhost:20128/v1      # scheme+host, not just /v
 export OPENAI_API_KEY=placeholder                     # real key for other providers
 ```
 
-Set the **bare** model name. aitester normalizes it per consumer — stripping
-`openai/` for the langchain explore agent, adding `openai/` for the litellm
-judge — so you never juggle two formats. Leave all three unset to use the
-claude-code-proxy defaults. Set-but-blank/malformed fails loudly at start.
+Set the **bare** model name for the default proxy. Leave all three unset to use
+the claude-code-proxy defaults. Set-but-blank/malformed fails loudly at start.
+
+**Any provider, not just OpenAI.** Both LLM paths are provider-agnostic (the
+fluid agent uses LangChain's `init_chat_model`; the in-walker judge uses
+litellm). Use a litellm-style `provider/model` spec and install the provider's
+package for native access:
+
+```bash
+pip install aitester-bdd[anthropic]
+export AITESTER_LLM_MODEL=anthropic/claude-opus-4-8   # creds via ANTHROPIC_API_KEY
+```
+
+A bare/`cc/…` model is treated as an OpenAI-compatible endpoint and uses
+`AITESTER_LLM_BASE_URL`/`AITESTER_LLM_API_KEY`; a native `provider/model` defers
+creds to that provider's own env. Legacy `OPENAI_BASE_URL`/`OPENAI_API_KEY` are
+still honored (deprecated).
 
 ## 6. The screenshot trail
 

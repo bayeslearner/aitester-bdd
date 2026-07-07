@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-07-07
+
+Make the fluid agent provider-agnostic and delete dead authoring code —
+resolving the split where the agent half was OpenAI-protocol-locked while
+litellm advertised multi-provider.
+
+### Changed
+
+- **Fluid explore/author agent is now provider-agnostic.** `_build_llm` uses
+  LangChain's `init_chat_model` instead of a hardcoded `ChatOpenAI`, so the
+  agent can run on any LangChain provider (OpenAI-compatible proxies, Anthropic,
+  Google, Bedrock, Ollama, …). The provider is derived from the model spec's
+  litellm-style prefix; a bare/`cc/…` model is an OpenAI-compatible endpoint.
+- The in-walker judge/diagnose one-shots stay on litellm (unchanged) — both LLM
+  paths are now multi-provider.
+
+### Added
+
+- `resolve_chat_model` / `split_provider` in `llm.config` — map a litellm-style
+  `provider/model` spec to a LangChain `(provider, model)` pair.
+- Optional provider extras: `aitester-bdd[anthropic]`, `aitester-bdd[google]`
+  (native non-OpenAI providers for the fluid agent).
+
+### Removed
+
+- Dead authoring code in `AIAgentLLM`: `author` / `refine` / `ground_selector`
+  methods, their system prompts, and `_strip_fences` — all superseded by the
+  deepagents authoring loop and called nowhere. The `LLMClient` Protocol is
+  slimmed to the in-walker one-shots (judge/judge_visual/diagnose) it actually
+  describes. Orphaned `DEFAULT_*` constants removed.
+
 ## [0.4.1] - 2026-07-07
 
 Provider-neutral LLM config + an enforced backend contract.

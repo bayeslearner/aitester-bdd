@@ -208,3 +208,29 @@ def test_validate_llm_env_neutral_names(monkeypatch):
     with pytest.raises(LLMConfigError) as exc:
         validate_llm_env()
     assert "AITESTER_LLM_BASE_URL" in str(exc.value)
+
+
+def test_split_provider_maps_litellm_prefix_to_langchain():
+    from aitester_bdd.llm.config import split_provider
+
+    # no prefix / cc proxy → openai-compatible endpoint
+    assert split_provider("cc/claude-opus-4-7") == ("openai", "cc/claude-opus-4-7")
+    # explicit litellm prefixes map to langchain provider names + strip prefix
+    assert split_provider("openai/cc/claude-opus-4-7") == ("openai", "cc/claude-opus-4-7")
+    assert split_provider("anthropic/claude-opus-4-8") == ("anthropic", "claude-opus-4-8")
+    assert split_provider("gemini/gemini-2.0-flash") == ("google_genai", "gemini-2.0-flash")
+    assert split_provider("groq/llama-3.1-70b") == ("groq", "llama-3.1-70b")
+
+
+def test_resolve_chat_model_default_and_native(monkeypatch):
+    from aitester_bdd.llm.config import DEFAULT_BASE_URL, resolve_chat_model
+
+    _clear_llm_env(monkeypatch)
+    provider, model, base, key = resolve_chat_model()
+    assert provider == "openai" and model.startswith("cc/")
+    assert base == DEFAULT_BASE_URL and key  # proxy creds applied
+
+    # native provider → creds deferred to its own LangChain env
+    provider, model, base, key = resolve_chat_model(model="anthropic/claude-opus-4-8")
+    assert provider == "anthropic" and model == "claude-opus-4-8"
+    assert base is None and key is None

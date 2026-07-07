@@ -34,9 +34,6 @@ log = logging.getLogger("aitester_bdd.authoring.agent_loop")
 # ─── Defaults ────────────────────────────────────────────────────────
 
 
-DEFAULT_MODEL = "cc/claude-opus-4-7"
-DEFAULT_BASE_URL = "http://localhost:20128/v1"
-DEFAULT_API_KEY = "placeholder"
 DEFAULT_MAX_ITERS = 100
 DEFAULT_MAX_ATTEMPTS = 2  # how many times to re-run the whole author loop on failure
 
@@ -335,34 +332,52 @@ def build_system_prompt(mode: str, *, pinning: str = "auto") -> str:
 def _build_llm(
     *, model: str | None = None, base_url: str | None = None, api_key: str | None = None,
 ):
-    """Construct the ChatOpenAI client used by the fluid explore/author agent.
+    """Construct the chat model for the fluid explore/author agent.
 
-    Config resolves via `llm.config.resolve_llm_config` — explicit args here →
-    neutral ``AITESTER_LLM_*`` env → legacy ``OPENAI_*`` env → claude-code-proxy
-    defaults for ``cc/…`` models (else creds left to ChatOpenAI's own env).
-    ChatOpenAI speaks the OpenAI protocol, so it wants the BARE model name
-    (no litellm ``openai/`` prefix).
+    Provider-agnostic: uses LangChain's `init_chat_model`, so the agent can run
+    on ANY provider LangChain supports (OpenAI-compatible proxies, Anthropic,
+    Google, Bedrock, Ollama, …) — not just the OpenAI protocol. The provider is
+    derived from the model spec's litellm-style prefix (`resolve_chat_model`):
+
+      * ``cc/…`` or a bare name → provider ``openai`` (OpenAI-compatible
+        endpoint) with the resolved base_url/api_key,
+      * ``anthropic/…`` / ``gemini/…`` / … → that provider natively, with creds
+        resolved from its own LangChain integration env.
+
+    Non-OpenAI providers need their integration package (e.g.
+    ``pip install aitester-bdd[anthropic]``); `init_chat_model` raises a clear
+    ImportError naming it.
     """
-    from langchain_openai import ChatOpenAI
+    from langchain.chat_models import init_chat_model
 
-    from aitester_bdd.llm.config import resolve_llm_config, strip_openai_prefix, validate_llm_env
+    from aitester_bdd.llm.config import resolve_chat_model, validate_llm_env
 
     # Fail loud on blank/malformed creds instead of deep in the HTTP client.
     validate_llm_env()
 
-    m, b, k = resolve_llm_config(model=model, base_url=base_url, api_key=api_key)
-    m = strip_openai_prefix(m)
+    provider, model_name, b, k = resolve_chat_model(
+        model=model, base_url=base_url, api_key=api_key,
+    )
 
-    # NB: opus rejects `temperature` as deprecated; omit it.
-    # max_retries=8: tolerate transient 529 overloads + 502/503/504. LangChain
-    # backs off exponentially; 8 retries covers a ~60s outage window.
-    max_retries = int(os.environ.get("AITESTER_LLM_MAX_RETRIES", "8"))
-    kwargs: dict = {"model": m, "timeout": 120.0, "max_retries": max_retries}
+    kwargs: dict = {"model": model_name, "model_provider": provider}
     if b:
         kwargs["base_url"] = b
     if k:
         kwargs["api_key"] = k
-    return ChatOpenAI(**kwargs)
+    # timeout/max_retries are OpenAI-constructor kwargs; pass them only on the
+    # (default, tested) openai path so we don't feed a kwarg another provider's
+    # constructor would reject. max_retries=8 rides out transient 5xx/overloads.
+    if provider == "openai":
+        kwargs["timeout"] = 120.0
+        kwargs["max_retries"] = int(os.environ.get("AITESTER_LLM_MAX_RETRIES", "8"))
+
+    try:
+        return init_chat_model(**kwargs)
+    except ImportError as exc:
+        raise RuntimeError(
+            f"aitester-bdd: the fluid agent's provider {provider!r} needs its "
+            f"LangChain integration package. {exc}"
+        ) from exc
 
 
 def _parse_terminal_markers(transcript: list[dict]) -> tuple[Path | None, Path | None]:

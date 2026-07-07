@@ -1,22 +1,20 @@
-"""LiteLLM-backed LLM adapter for aitester-bdd.
+"""LiteLLM-backed LLM adapter for aitester-bdd's in-walker one-shot calls.
 
-One library, one config surface, two distinct uses:
+This is the NON-agentic escape hatch the walker uses when deterministic checks
+can't express an assertion (no tools, no loop — prompt in, text out):
 
-  AUTHORING (CLI / standalone Python):
-    - `author(story, snapshot, skill, base_url) -> str` — produce .robot
-    - `refine(suite, dryrun_output, latest_snapshot, skill) -> str` — patch
-    - `ground_selector(target_description, snapshot) -> str | None` — selector
+    - `judge(criterion, observation) -> bool`      — semantic StateCheck (text)
+    - `judge_visual(criterion, png_bytes) -> bool` — visual_semantic (screenshot)
+    - `diagnose(context) -> str`                   — failure-diagnosis aspect
+    - `ask(prompt, page_context) -> str`           — the `I ask LLM` action
 
-  IN-WALKER ESCAPE HATCH (called by the walker for `semantic` /
-  `visual_semantic` StateChecks — sparingly, only when deterministic
-  checks can't express the assertion):
-    - `judge(criterion, observation) -> bool` — text
-    - `judge_visual(criterion, png_bytes) -> bool` — screenshot
+The AGENTIC explore/author loop does NOT go through here — it uses
+`authoring.agent_loop` (deepagents + langgraph + `init_chat_model`).
 
-Why LiteLLM: one call shape (`litellm.completion`) dispatches to
-OpenAI, Anthropic, Azure, Bedrock, OpenAI-compat proxies, etc. Multimodal
-(image) messages use the standard OpenAI shape and LiteLLM translates
-to each provider's native form.
+Why LiteLLM for the one-shots: one call shape (`litellm.completion`) dispatches
+to OpenAI, Anthropic, Azure, Bedrock, OpenAI-compat proxies, etc. Multimodal
+(image) messages use the standard OpenAI shape and LiteLLM translates to each
+provider's native form.
 
 Config resolves through `llm.config.resolve_llm_config` — neutral,
 aitester-owned names (this product depends on LiteLLM, not on any vendor):
@@ -33,37 +31,6 @@ import logging
 
 log = logging.getLogger("aitester_bdd.llm.aiagent")
 
-
-SYSTEM_PROMPT_AUTHOR = """You are aitester-bdd's authoring agent.
-
-Your single output is a complete, valid Robot Framework .robot file using ONLY the
-keywords documented in the provided skill. Snapshot-grounded selectors only —
-every selector you write MUST appear in the accessibility snapshot you were given.
-No invented natural-language verbs. No fixed sleeps. Use observation gates
-(`And selector ... exists` after an action) instead.
-
-Output ONLY the .robot file contents, no commentary, no markdown fences.
-"""
-
-SYSTEM_PROMPT_REFINE = """You are aitester-bdd's refinement agent.
-
-A .robot suite failed `robot --dryrun` or execution. Given the failure output and
-a fresh accessibility snapshot, return the MINIMAL patched .robot file that
-addresses the failure. Stay within the shipped keyword vocabulary. Re-ground any
-broken selectors against the new snapshot. Preserve rule structure.
-
-Output ONLY the .robot file contents, no commentary, no markdown fences.
-"""
-
-SYSTEM_PROMPT_GROUND = """You are aitester-bdd's selector grounding agent.
-
-Given a description of a UI element and an accessibility snapshot, return the
-SINGLE best CSS / aria selector for that element. Prefer in this order:
-  data-testid > role+name > aria-label > id > stable class > text content.
-
-If no suitable element is visible in the snapshot, return EMPTY (no output).
-Output ONLY the selector string, no quotes, no commentary.
-"""
 
 SYSTEM_PROMPT_JUDGE = """You are aitester-bdd's in-walker judge — an escape
 hatch for assertions that genuinely need AI-level judgment (semantic meaning
@@ -99,11 +66,6 @@ Write a SHORT (1-3 sentence) diagnosis that:
 Do NOT speculate beyond the snapshot. Do NOT propose code fixes. Just
 state the cause and where it lives (SUT vs test).
 """
-
-
-DEFAULT_MODEL = "openai/cc/claude-opus-4-7"
-DEFAULT_BASE_URL = "http://localhost:20128/v1"
-DEFAULT_API_KEY = "placeholder"  # claude-code-proxy ignores the key
 
 
 class AIAgentLLM:
@@ -161,45 +123,6 @@ class AIAgentLLM:
             ],
             max_tokens=max_tokens,
         )
-
-    # ------------------------------------------------------------------
-    # Authoring
-    # ------------------------------------------------------------------
-
-    def author(self, *, story: str, snapshot: str, skill: str, base_url: str) -> str:
-        user = (
-            f"# Skill grammar\n\n{skill}\n\n"
-            f"---\n\n"
-            f"# Target base URL\n{base_url}\n\n"
-            f"# Accessibility snapshot of entry page\n```\n{snapshot}\n```\n\n"
-            f"# Story\n{story}\n\n"
-            f"Produce the .robot suite now."
-        )
-        return _strip_fences(self._chat(SYSTEM_PROMPT_AUTHOR, user))
-
-    def refine(
-        self, *, suite: str, dryrun_output: str, latest_snapshot: str, skill: str,
-    ) -> str:
-        user = (
-            f"# Skill grammar\n\n{skill}\n\n"
-            f"---\n\n"
-            f"# Current suite\n```robot\n{suite}\n```\n\n"
-            f"# Failure output\n```\n{dryrun_output}\n```\n\n"
-            f"# Fresh snapshot\n```\n{latest_snapshot}\n```\n\n"
-            f"Produce the patched .robot suite now."
-        )
-        return _strip_fences(self._chat(SYSTEM_PROMPT_REFINE, user))
-
-    def ground_selector(
-        self, *, target_description: str, snapshot: str,
-    ) -> str | None:
-        user = (
-            f"# Target\n{target_description}\n\n"
-            f"# Snapshot\n```\n{snapshot}\n```\n\n"
-            f"Selector:"
-        )
-        out = self._chat(SYSTEM_PROMPT_GROUND, user, max_tokens=256).strip()
-        return out or None
 
     # ------------------------------------------------------------------
     # In-walker escape hatch — keep it small + cheap
@@ -271,15 +194,3 @@ class AIAgentLLM:
             max_tokens=8,
         ).strip().upper()
         return out.startswith("PASS")
-
-
-def _strip_fences(s: str) -> str:
-    """Strip ```robot ... ``` or ``` ... ``` fences if the LLM added them."""
-    s = s.strip()
-    if s.startswith("```"):
-        lines = s.splitlines()
-        lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        s = "\n".join(lines).strip()
-    return s
