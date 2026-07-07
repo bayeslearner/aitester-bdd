@@ -18,22 +18,18 @@ OpenAI, Anthropic, Azure, Bedrock, OpenAI-compat proxies, etc. Multimodal
 (image) messages use the standard OpenAI shape and LiteLLM translates
 to each provider's native form.
 
-Config (env vars):
-  AITESTER_LLM_MODEL  — LiteLLM model spec; default points at the
-                        claude-code-proxy:
-                          "openai/cc/claude-opus-4-7"
-  OPENAI_BASE_URL     — proxy URL; default "http://localhost:20128/v1"
-  OPENAI_API_KEY      — auth (placeholder works against claude-code-proxy)
-
-Other providers work too — anything LiteLLM supports — but this project
-is wired against the local claude-code-proxy by default. Override the
-three env vars to swap providers.
+Config resolves through `llm.config.resolve_llm_config` — neutral,
+aitester-owned names (this product depends on LiteLLM, not on any vendor):
+  AITESTER_LLM_MODEL     — model spec (bare, e.g. "cc/claude-opus-4-7")
+  AITESTER_LLM_BASE_URL  — endpoint URL (proxy default for cc/… models)
+  AITESTER_LLM_API_KEY   — credential (proxy default for cc/… models)
+Legacy OPENAI_BASE_URL / OPENAI_API_KEY are still honored (deprecated).
+Any other model defers creds to LiteLLM's provider-native env.
 """
 from __future__ import annotations
 
 import base64
 import logging
-import os
 
 log = logging.getLogger("aitester_bdd.llm.aiagent")
 
@@ -110,32 +106,28 @@ DEFAULT_BASE_URL = "http://localhost:20128/v1"
 DEFAULT_API_KEY = "placeholder"  # claude-code-proxy ignores the key
 
 
-def _resolve_model(explicit: str | None) -> str:
-    """Resolve the litellm model spec.
-
-    litellm wants a provider-prefixed spec (``openai/cc/...``). The same
-    AITESTER_LLM_MODEL var also feeds the langchain path, which wants the bare
-    name — so a user may have set either format. Normalize to the prefixed form
-    here so the judge/finalize path always dispatches correctly."""
-    from aitester_bdd.llm.config import ensure_openai_prefix
-    raw = explicit or os.environ.get("AITESTER_LLM_MODEL", DEFAULT_MODEL)
-    return ensure_openai_prefix(raw)
-
-
-def _ensure_proxy_env() -> None:
-    """If pointing at the default claude-code-proxy, set OPENAI_BASE_URL +
-    OPENAI_API_KEY so litellm picks them up. No-op if user already set them."""
-    os.environ.setdefault("OPENAI_BASE_URL", DEFAULT_BASE_URL)
-    os.environ.setdefault("OPENAI_API_KEY", DEFAULT_API_KEY)
-
-
 class AIAgentLLM:
     """LiteLLM-backed LLM adapter. Same instance is reused for authoring
-    and in-walker judge calls — one credential set, one config."""
+    and in-walker judge calls — one credential set, one config.
 
-    def __init__(self, *, model: str | None = None) -> None:
-        self.model = _resolve_model(model)
-        _ensure_proxy_env()
+    Config is resolved via `llm.config.resolve_llm_config` (explicit args →
+    neutral ``AITESTER_LLM_*`` env → legacy ``OPENAI_*`` env → proxy defaults
+    for ``cc/…`` models, else provider-native litellm env). Creds are passed
+    directly to ``litellm.completion`` as ``api_base``/``api_key`` — no global
+    env mutation — so non-proxy providers resolve their own creds normally."""
+
+    def __init__(
+        self, *, model: str | None = None, base_url: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        from aitester_bdd.llm.config import ensure_openai_prefix, resolve_llm_config
+
+        m, b, k = resolve_llm_config(model=model, base_url=base_url, api_key=api_key)
+        # litellm wants a provider-prefixed spec; normalize (the same
+        # AITESTER_LLM_MODEL also feeds the bare-name langchain path).
+        self.model = ensure_openai_prefix(m)
+        self.base_url = b
+        self.api_key = k
 
     def _completion(self, messages: list[dict], *, max_tokens: int = 2048) -> str:
         """Single litellm completion call. Returns the assistant text.
@@ -143,16 +135,22 @@ class AIAgentLLM:
         opus-4.7 rejects `temperature` as deprecated. Setting it to None
         (not omitting it!) is what litellm respects — its default would
         otherwise inject a value. `drop_params=True` is belt-and-suspenders
-        for other unsupported params per provider."""
+        for other unsupported params per provider. `api_base`/`api_key` are
+        passed only when resolved; otherwise litellm uses provider-native env."""
         import litellm
 
-        resp = litellm.completion(
+        kwargs: dict = dict(
             model=self.model,
             messages=messages,
             max_tokens=max_tokens,
             temperature=None,
             drop_params=True,
         )
+        if self.base_url:
+            kwargs["api_base"] = self.base_url
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        resp = litellm.completion(**kwargs)
         return resp.choices[0].message.content or ""
 
     def _chat(self, system: str, user: str, *, max_tokens: int = 4096) -> str:

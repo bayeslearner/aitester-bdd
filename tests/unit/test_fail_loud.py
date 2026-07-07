@@ -102,7 +102,10 @@ def test_agent_browser_backend_preflight_missing_cli(monkeypatch):
 
 
 def _clear_llm_env(monkeypatch):
-    for v in ("AITESTER_LLM_MODEL", "OPENAI_BASE_URL", "OPENAI_API_KEY"):
+    for v in (
+        "AITESTER_LLM_MODEL", "AITESTER_LLM_BASE_URL", "AITESTER_LLM_API_KEY",
+        "OPENAI_BASE_URL", "OPENAI_API_KEY",
+    ):
         monkeypatch.delenv(v, raising=False)
 
 
@@ -157,3 +160,51 @@ def test_model_prefix_normalization():
     assert ensure_openai_prefix("openai/cc/claude-opus-4-7") == "openai/cc/claude-opus-4-7"
     # a recognized non-openai provider is left untouched
     assert ensure_openai_prefix("anthropic/claude-opus-4-7") == "anthropic/claude-opus-4-7"
+
+
+def test_resolve_defaults_to_proxy_for_cc_model(monkeypatch):
+    from aitester_bdd.llm.config import DEFAULT_BASE_URL, resolve_llm_config
+
+    _clear_llm_env(monkeypatch)
+    model, base, key = resolve_llm_config()
+    assert model.startswith("cc/")
+    assert base == DEFAULT_BASE_URL and key  # proxy defaults applied
+
+
+def test_resolve_defers_creds_for_non_proxy_model(monkeypatch):
+    """A non-cc/ model leaves base/key None so litellm uses its own env."""
+    from aitester_bdd.llm.config import resolve_llm_config
+
+    _clear_llm_env(monkeypatch)
+    model, base, key = resolve_llm_config(model="anthropic/claude-opus-4-8")
+    assert model == "anthropic/claude-opus-4-8"
+    assert base is None and key is None
+
+
+def test_resolve_precedence_explicit_over_neutral_over_legacy(monkeypatch):
+    from aitester_bdd.llm.config import resolve_llm_config
+
+    _clear_llm_env(monkeypatch)
+    # legacy only
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://legacy/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "legacy-key")
+    _, base, key = resolve_llm_config()
+    assert base == "http://legacy/v1" and key == "legacy-key"
+    # neutral overrides legacy
+    monkeypatch.setenv("AITESTER_LLM_BASE_URL", "http://neutral/v1")
+    monkeypatch.setenv("AITESTER_LLM_API_KEY", "neutral-key")
+    _, base, key = resolve_llm_config()
+    assert base == "http://neutral/v1" and key == "neutral-key"
+    # explicit arg overrides everything
+    _, base, key = resolve_llm_config(base_url="http://explicit/v1", api_key="explicit-key")
+    assert base == "http://explicit/v1" and key == "explicit-key"
+
+
+def test_validate_llm_env_neutral_names(monkeypatch):
+    from aitester_bdd.llm.config import LLMConfigError, validate_llm_env
+
+    _clear_llm_env(monkeypatch)
+    monkeypatch.setenv("AITESTER_LLM_BASE_URL", "/v1")  # malformed
+    with pytest.raises(LLMConfigError) as exc:
+        validate_llm_env()
+    assert "AITESTER_LLM_BASE_URL" in str(exc.value)

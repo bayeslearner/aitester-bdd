@@ -332,42 +332,37 @@ def build_system_prompt(mode: str, *, pinning: str = "auto") -> str:
     return base_skill + planning_block + _AUTHOR_PROBING_BLOCK
 
 
-def _build_llm():
-    """Construct the ChatOpenAI client.
+def _build_llm(
+    *, model: str | None = None, base_url: str | None = None, api_key: str | None = None,
+):
+    """Construct the ChatOpenAI client used by the fluid explore/author agent.
 
-    Reads env vars, defaults to the local claude-code-proxy:
-      AITESTER_LLM_MODEL   -> model name        (default: cc/claude-opus-4-7)
-      OPENAI_BASE_URL      -> proxy/base URL    (default: http://localhost:20128/v1)
-      OPENAI_API_KEY       -> auth              (default: placeholder)
-
-    For non-OpenAI-compatible backends, the user can swap in any
-    langchain chat model and pass it in via `model_override`.
+    Config resolves via `llm.config.resolve_llm_config` — explicit args here →
+    neutral ``AITESTER_LLM_*`` env → legacy ``OPENAI_*`` env → claude-code-proxy
+    defaults for ``cc/…`` models (else creds left to ChatOpenAI's own env).
+    ChatOpenAI speaks the OpenAI protocol, so it wants the BARE model name
+    (no litellm ``openai/`` prefix).
     """
     from langchain_openai import ChatOpenAI
 
-    from aitester_bdd.llm.config import strip_openai_prefix, validate_llm_env
+    from aitester_bdd.llm.config import resolve_llm_config, strip_openai_prefix, validate_llm_env
 
     # Fail loud on blank/malformed creds instead of deep in the HTTP client.
     validate_llm_env()
 
-    # ChatOpenAI talks to the OpenAI-compatible endpoint directly, so it wants
-    # the model WITHOUT a litellm ``openai/`` prefix. Strip it if the user set
-    # AITESTER_LLM_MODEL in the litellm format (same var feeds both paths).
-    model = strip_openai_prefix(os.environ.get("AITESTER_LLM_MODEL", DEFAULT_MODEL))
-    base_url = os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL)
-    api_key = os.environ.get("OPENAI_API_KEY", DEFAULT_API_KEY)
+    m, b, k = resolve_llm_config(model=model, base_url=base_url, api_key=api_key)
+    m = strip_openai_prefix(m)
 
-    # NB: opus-4.7 rejects `temperature` as deprecated; omit it.
-    # max_retries=8: tolerate transient Anthropic 529 overloads + 502/503/504.
-    # LangChain backs off exponentially; 8 retries covers a ~60s outage window.
+    # NB: opus rejects `temperature` as deprecated; omit it.
+    # max_retries=8: tolerate transient 529 overloads + 502/503/504. LangChain
+    # backs off exponentially; 8 retries covers a ~60s outage window.
     max_retries = int(os.environ.get("AITESTER_LLM_MAX_RETRIES", "8"))
-    return ChatOpenAI(
-        model=model,
-        base_url=base_url,
-        api_key=api_key,
-        timeout=120.0,
-        max_retries=max_retries,
-    )
+    kwargs: dict = {"model": m, "timeout": 120.0, "max_retries": max_retries}
+    if b:
+        kwargs["base_url"] = b
+    if k:
+        kwargs["api_key"] = k
+    return ChatOpenAI(**kwargs)
 
 
 def _parse_terminal_markers(transcript: list[dict]) -> tuple[Path | None, Path | None]:
@@ -406,6 +401,9 @@ def author_with_agent(
     max_iters: int = DEFAULT_MAX_ITERS,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     debug: bool = False,
+    llm_model: str | None = None,
+    llm_base_url: str | None = None,
+    llm_api_key: str | None = None,
 ) -> AuthoringResult:
     """Public entry point: retries the inner loop on crash/recursion-limit.
 
@@ -436,6 +434,9 @@ def author_with_agent(
             pinning=pinning,
             max_iters=max_iters,
             debug=debug,
+            llm_model=llm_model,
+            llm_base_url=llm_base_url,
+            llm_api_key=llm_api_key,
         )
         if result.suite_path or result.bug_report_path:
             return result
@@ -455,6 +456,9 @@ def _author_once(
     pinning: str = "auto",
     max_iters: int = DEFAULT_MAX_ITERS,
     debug: bool = False,
+    llm_model: str | None = None,
+    llm_base_url: str | None = None,
+    llm_api_key: str | None = None,
 ) -> AuthoringResult:
     """Run the authoring agent loop.
 
@@ -475,7 +479,7 @@ def _author_once(
 
     from aitester_bdd.authoring.tools import build_tools, session_id
 
-    llm = _build_llm()
+    llm = _build_llm(model=llm_model, base_url=llm_base_url, api_key=llm_api_key)
     tools = build_tools(source_root=source_root)
     system_prompt = build_system_prompt(mode, pinning=pinning)
 
@@ -640,6 +644,9 @@ def explore_with_agent(
     source_root: Path | None = None,
     max_iters: int = DEFAULT_MAX_ITERS,
     debug: bool = False,
+    llm_model: str | None = None,
+    llm_base_url: str | None = None,
+    llm_api_key: str | None = None,
 ) -> ExploreResult:
     """Run the agent loop in explore mode — fluid test, no suite output.
 
@@ -660,7 +667,7 @@ def explore_with_agent(
     )
 
     _reset_explore_state()
-    llm = _build_llm()
+    llm = _build_llm(model=llm_model, base_url=llm_base_url, api_key=llm_api_key)
 
     # Terminal tools (journey_complete, journey_blocked) — always needed
     terminal_tools = build_explore_tools()

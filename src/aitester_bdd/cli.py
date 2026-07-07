@@ -43,6 +43,9 @@ def author(
     ),
     max_iters: int = typer.Option(100, "--max-iters", help="Max agent iterations per attempt before bailing."),
     max_attempts: int = typer.Option(2, "--max-attempts", help="Retry the whole authoring loop up to N times on crash / recursion limit."),
+    llm_model: str | None = typer.Option(None, "--llm-model", help="LLM model spec (overrides AITESTER_LLM_MODEL). Bare name, e.g. cc/claude-opus-4-7."),
+    llm_base_url: str | None = typer.Option(None, "--llm-base-url", help="LLM endpoint URL (overrides AITESTER_LLM_BASE_URL / OPENAI_BASE_URL)."),
+    llm_api_key: str | None = typer.Option(None, "--llm-api-key", help="LLM API key (overrides AITESTER_LLM_API_KEY / OPENAI_API_KEY)."),
     debug: bool = typer.Option(
         False, "--debug", "-d",
         help="Stream each agent step (tool calls + results) to stderr so you can watch the explorer work.",
@@ -82,6 +85,9 @@ def author(
         max_iters=max_iters,
         max_attempts=max_attempts,
         debug=debug,
+        llm_model=llm_model,
+        llm_base_url=llm_base_url,
+        llm_api_key=llm_api_key,
     )
 
     if result.suite_path:

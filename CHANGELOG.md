@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-07-07
+
+Provider-neutral LLM config + an enforced backend contract.
+
+### Added
+
+- **`BrowserBackend` Protocol** (`engine/browser.py`) — the single source of
+  truth for the surface every backend must implement, mirroring the
+  `llm.base.LLMClient` idiom. A conformance test derives the surface from the
+  Protocol and asserts each backend (`_PlaywrightBackend`, `AgentBrowserBackend`,
+  `NodriverBackend`) implements it — so a future surface method (the next
+  `preflight`) can't be added to one backend and silently forgotten on another.
+- **Neutral LLM env vars** — `AITESTER_LLM_BASE_URL` / `AITESTER_LLM_API_KEY`
+  (aitester owns them; the product depends on litellm, not on OpenAI/Anthropic).
+  Legacy `OPENAI_BASE_URL` / `OPENAI_API_KEY` still honored (deprecated).
+- **Explicit LLM arg passing** — `--llm-model` / `--llm-base-url` / `--llm-api-key`
+  on `aitester author`, and `llm_model` / `llm_base_url` / `llm_api_key` kwargs on
+  `explore_with_agent` / `author_with_agent`.
+- **litellm-native env fallback** — for any non-`cc/…` model, base_url/api_key are
+  left unset so litellm / ChatOpenAI resolve creds from their own provider env
+  (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …).
+
+### Changed
+
+- LLM config resolves through `resolve_llm_config` (explicit arg → neutral env →
+  legacy env → proxy default / provider-native). The litellm adapter passes
+  `api_base`/`api_key` directly to `completion` instead of mutating global env.
+- `validate_llm_env` now covers the neutral names too.
+
 ## [0.4.0] - 2026-07-07
 
 Honesty & legibility pass — the harness can no longer silently lie about its

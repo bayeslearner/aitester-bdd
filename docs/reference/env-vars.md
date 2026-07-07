@@ -22,18 +22,31 @@ Complete reference for all environment variables aitester-bdd reads.
 | `AITESTER_EMIT_DIR` | RF `${OUTPUT_DIR}` or cwd | Output directory for JSONL files |
 | `AITESTER_WALK_LOG_MAX` | `2000` | In-memory walk log ring size |
 
-## LLM (diagnosis + semantic checks)
+## LLM (fluid tests, diagnosis + semantic checks)
+
+aitester-bdd is provider-agnostic — it depends on **litellm** (multi-provider)
+and **langchain-openai** (the OpenAI *protocol* client), not on any vendor SDK.
+Its own config uses **neutral, aitester-owned** names:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AITESTER_LLM_MODEL` | `cc/claude-opus-4-7` | Model ID. Set the **bare** name (e.g. `cc/claude-opus-4-7`); aitester normalizes it — stripping `openai/` for the langchain explore agent and adding `openai/` for the litellm judge. Setting either format works. |
+| `AITESTER_LLM_MODEL` | `cc/claude-opus-4-7` | Model spec. Set the **bare** name; aitester normalizes it (strips `openai/` for the langchain explore agent, adds `openai/` for the litellm judge). |
+| `AITESTER_LLM_BASE_URL` | (proxy default for `cc/…`) | LLM endpoint URL. Must be scheme+host (e.g. `http://host:port/v1`); a bare path like `/v1` is rejected up front. |
+| `AITESTER_LLM_API_KEY` | (proxy default for `cc/…`) | LLM credential. A **blank** value is rejected up front. |
 | `AITESTER_AI_DIAGNOSIS` | `on` | `off` to disable LLM diagnosis |
-| `OPENAI_BASE_URL` | `http://localhost:20128/v1` | LLM endpoint URL. Must be scheme+host (e.g. `http://host:port/v1`); a bare path like `/v1` is rejected up front. |
-| `OPENAI_API_KEY` | `placeholder` | API key. The default placeholder works against claude-code-proxy; set a real key for other providers. A **blank** value is rejected up front. |
+| `AITESTER_LLM_MAX_RETRIES` | `8` | Explore/author agent retry budget on transient LLM errors |
 
-If any of these three is **set but blank/malformed**, the fluid agent fails
-loudly at start naming the exact variable and an example — it no longer dies
-deep inside an HTTP client. Leaving them **unset** uses the defaults above.
+**Resolution precedence** (per value): explicit arg (`--llm-model` / `--llm-base-url`
+/ `--llm-api-key`, or the `llm_*` kwargs on `explore_with_agent` /
+`author_with_agent`) → `AITESTER_LLM_*` → legacy `OPENAI_BASE_URL` /
+`OPENAI_API_KEY` (**deprecated**, still honored) → for the default
+claude-code-proxy model (`cc/…`) the local-proxy defaults, otherwise **left
+unset so litellm / ChatOpenAI resolve creds from their own provider-native env**
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …).
+
+If any LLM var is **set but blank/malformed**, the fluid agent fails loudly at
+start naming the exact variable and an example — it no longer dies deep inside
+an HTTP client. Leaving them **unset** uses the precedence above.
 
 ## Emit
 

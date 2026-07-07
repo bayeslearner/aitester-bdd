@@ -35,12 +35,31 @@ Do not use when: there's no live target to drive (no URL); the user is hand-writ
 
 | Phase | What you do | Tool |
 |-------|-------------|------|
-| Orient | Confirm env: RF + `agent-browser` CLI on PATH + LLM config. | (the runtime checks this on `aitester run`; no separate orient command) |
+| Orient | Confirm the environment is real before doing anything else. Run `aitester doctor` — it verifies the interpreter, the chosen browser backend (with an agent-browser command-shape smoke test), and LLM config, printing a one-line remedy for anything not ready. | `aitester doctor` |
 | Explore | Drive the **live target** via the `agent-browser` CLI through `execute` (bash). Log in if needed, navigate the pages the story passes through, snapshot each. Record selectors you can prove exist. | `execute "agent-browser ..."` |
 | Author | Write `suite.robot` using ONLY the keywords in § 4. Every selector must come from an attribute observed on the live page. Declare `${ENGINE}` in `*** Variables ***`. | `write_robot_suite` |
 | Review | `robot --dryrun` must pass cleanly. Fix any unknown-keyword / arg-shape errors. | `robot --dryrun suite.robot` |
 | Refine | If a real run fails, re-explore the failing step via `agent-browser`, patch the suite. | `execute` + edit |
 | Ship | Hand `suite.robot` to the user. They run `robot suite.robot` without you. | — |
+
+### Operating contract (why you can trust — and must not dodge — this tool)
+
+- **Green means the checks actually ran.** A run against a stub/uninitialized
+  browser does not silently pass — the walker refuses to start and fails loudly
+  with a remedy (INV-4). If `aitester run` errors with "browser preflight
+  FAILED", fix the browser (`aitester init-browser`, or
+  `AITESTER_BROWSER=agent-browser`); do **not** retreat to headless REST/oracle
+  checks and call the UI covered.
+- **Failures name their fix.** Blank/malformed LLM creds, a missing
+  `agent-browser` CLI, and CLI drift are reported up front by `aitester doctor`
+  and at run start — not as a cryptic stack trace mid-run.
+- **You can prove the journey visually.** Run with `AITESTER_SHOT_EVERY_STEP=1`
+  to leave a numbered PNG trail (pinned: after every action/rule; fluid: at each
+  milestone) in the output dir. When asked "show me the screenshots," this is
+  the answer.
+- Full operational reference: the **"Running a Suite, Start to Finish"** guide
+  in the docs (env contract, the two modes, doctor, screenshot trail, the top
+  failure messages and their fixes).
 
 ### One explorer, three runtime backends
 
