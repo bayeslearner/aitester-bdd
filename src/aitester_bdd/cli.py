@@ -50,6 +50,14 @@ def author(
         False, "--debug", "-d",
         help="Stream each agent step (tool calls + results) to stderr so you can watch the explorer work.",
     ),
+    signin: str | None = typer.Option(
+        None, "--signin",
+        help="A sign-in fixture file: one state-setup action per line (action=open url=…; "
+             "action=input css=… value=env:APP_USER; action=password css=… value=env:APP_PASSWORD; "
+             "action=click css=…; skip_when=<signed-in marker css>). aitester signs the browser in "
+             "before the agent starts, so the agent never sees a credential, and writes the same "
+             "block into the authored suite so a replay signs in the same way.",
+    ),
     agent: str = typer.Option(
         "deepagents", "--agent",
         help="Who authors: 'deepagents' (in-process, default) or 'acp:<command>' for an external "
@@ -78,6 +86,17 @@ def author(
     typer.echo(f"[author] suite_path={suite_path}, triage_dir={triage_path}")
     if src_root:
         typer.echo(f"[author] source_root={src_root}")
+
+    if signin:
+        from aitester_bdd.authoring.signin import prepare_signed_in_session
+
+        try:
+            session = prepare_signed_in_session(Path(signin))
+        except Exception as exc:
+            typer.echo(f"[author] ✗ sign-in fixture failed: {exc}")
+            raise typer.Exit(code=2) from exc
+        os.environ["AITESTER_AUTHOR_SESSION"] = session
+        typer.echo(f"[author] signed in (fixture {signin}); session {session}")
 
     if agent.startswith("acp:"):
         try:
@@ -116,6 +135,11 @@ def author(
         typer.echo(f"[author] ✗ unknown --agent {agent!r}; expected deepagents or acp:<command>")
         raise typer.Exit(code=2)
 
+    if result.suite_path and signin:
+        from aitester_bdd.authoring.signin import inject_signin_block
+
+        inject_signin_block(result.suite_path, Path(signin))
+        typer.echo("[author] sign-in block written into the suite (values stay env: references)")
     if result.suite_path:
         typer.echo(f"[author] ✓ wrote suite: {result.suite_path} ({result.elapsed_s:.0f}s)")
     elif result.bug_report_path:

@@ -9,7 +9,9 @@ Complete reference for all environment variables aitester-bdd reads.
 | `AITESTER_BROWSER` | `playwright` | Backend: `playwright`, `agent-browser`, `nodriver` |
 | `AITESTER_HEADED` | (unset) | `1`/`true`/`yes` = visible browser |
 | `AITESTER_STEP_DELAY_MS` | `0` | Pause after each action (ms) |
-| `AITESTER_RUN_TIMEOUT` | `300` | Global run timeout (seconds) |
+| `AITESTER_RUN_TIMEOUT` | `0` | Run budget in seconds; 0 = none. Rules past it are reported as not run. A suite's `And I set run timeout N s` wins |
+| `AITESTER_ALLOW_SHELL` | (unset) | `1` lets a suite's `shell` actions run at replay; refused otherwise |
+| `AITESTER_ALLOWED_ORIGINS` | (unset) | Comma-separated origins the authoring agent may `open` besides the app under test (a sign-in host) |
 | `AITESTER_RUN_SESSION` | auto UUID | Browser session ID override |
 | `AITESTER_DISABLE_ASPECTS` | (unset) | CSV of aspects to disable (`trajectory`, `instrument`, `diagnose`, `step_delay`, `screenshot`) |
 | `AITESTER_SHOT_EVERY_STEP` | (unset) | `1`/`true`/`yes` = capture a numbered PNG after every action/rule (pinned) and at each milestone (fluid). Leaves a visual trail in the output dir. |

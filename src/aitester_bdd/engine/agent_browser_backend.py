@@ -474,16 +474,30 @@ class AgentBrowserBackend:
         return self.get_attribute(selector, "class")
 
     def get_count(self, selector: str) -> int:
-        try:
-            out = self._run("get", "count", selector)
-        except Exception:
-            return 0
-        try:
-            return int(out.strip())
-        except (ValueError, TypeError):
-            # Some agent-browser builds print "count: 3" instead of "3".
+        # The CLI answers 0 for a selector it cannot parse (measured 2026-10-23), which
+        # made negative checks pass on Playwright-only syntax. Ask the page instead and
+        # fail on an invalid selector (spec 05 R6). The CLI's own dialects (text=, @refs)
+        # still go through the CLI.
+        if selector.startswith(("text=", "@")) or selector.startswith("text="):
+            try:
+                out = self._run("get", "count", selector)
+            except Exception:
+                return 0
             m = re.search(r"(\d+)", out)
             return int(m.group(1)) if m else 0
+        v = self.evaluate_js(
+            f"(() => {{ try {{ return document.querySelectorAll({json.dumps(selector)}).length; }} "
+            f"catch (e) {{ return -1; }} }})()"
+        )
+        if v == "__NAVIGATED__":
+            raise RuntimeError("page navigated or closed while counting elements")
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            raise RuntimeError(f"element count for {selector!r} came back as {v!r}") from None
+        if n == -1:
+            raise ValueError(f"{selector!r} is not a valid CSS selector in the browser")
+        return n
 
     def _js_bool(self, expr: str) -> bool:
         """Evaluate a boolean JS expression. Only a real `true` is True.

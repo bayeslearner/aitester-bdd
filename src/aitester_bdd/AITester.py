@@ -377,12 +377,22 @@ class InterruptConfig:
 
 
 @dataclass
+class Cleanup:
+    """Actions run after the suite, even when it aborted (spec 05 R4): the
+    state-setup grammar plus `action=api method=… path=…`."""
+
+    actions: list[dict[str, str]] = field(default_factory=list)
+
+
+@dataclass
 class Verification:
     """The whole run — one per .robot suite."""
 
     name: str = ""
     scenarios: list[Scenario] = field(default_factory=list)
     state_setup: StateSetup = field(default_factory=StateSetup)
+    cleanup: Cleanup = field(default_factory=Cleanup)
+    run_timeout_s: int = 0  # suite-declared run budget; 0 = none
     interrupts: InterruptConfig = field(default_factory=InterruptConfig)
     hooks: list[HookDef] = field(default_factory=list)
     # Artifact model — declared per-verification, scoped per-scenario at write time.
@@ -1734,6 +1744,20 @@ class AITester:
             self._v.state_setup.skip_when = kv["skip_when"]
         if "action" in kv:
             self._v.state_setup.actions.append(kv)
+
+    @keyword("And I configure cleanup")
+    def configure_cleanup(self, *args: str) -> None:
+        """Register one clean-up action, run after the suite even on failure.
+        Same k=v grammar as state setup (open/input/password/click/wait), plus
+        `action=api method=DELETE path=/api/things/${ID}`."""
+        kv = _parse_options(args)
+        if "action" in kv:
+            self._v.cleanup.actions.append(kv)
+
+    @keyword("And I set run timeout ${seconds} s")
+    def set_run_timeout(self, seconds: str) -> None:
+        """A budget for the whole run; rules not reached are reported as not run."""
+        self._v.run_timeout_s = int(_strip_quotes(seconds))
 
     @keyword("And I register hook \"${name}\" at \"${point}\"")
     def register_hook(self, name: str, point: str, *opts: str) -> None:

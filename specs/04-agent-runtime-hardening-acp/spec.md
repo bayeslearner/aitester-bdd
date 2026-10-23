@@ -1,13 +1,13 @@
 ---
 spec_id: 04-agent-runtime-hardening-acp
-status: DRAFT
-closed_as: null
+status: CLOSED
+closed_as: FORK-FORWARD
 since: 2026-10-23
 until: null
 epic: authoring
 features: [deepagents-07-support, llm-call-budget, author-progress-line, ui-navigation-before-bug, acp-external-agent]
 supersedes: []
-superseded_by: null
+superseded_by: 06-sandbox-runtime
 depends_on: []
 anchors:
   - docs/internals/authoring.md
@@ -162,28 +162,28 @@ OpenAI-compatible base URL.
   - [x] 1.3 Per-step progress line and retry/timeout lines without `--debug` (R3).
   - [x] 1.4 Prompt rule and `report_bug` description for UI navigation first (R4).
 - [ ] 2. Core
-  - [ ] 2.1 `Author` protocol and `DeepAgentsAuthor` around the current loop (R6).
+  - [>] -> 06-sandbox-runtime 2.1 `Author` protocol and `DeepAgentsAuthor` around the current loop (R6).
   - [x] 2.2 `mcp_tools.py`: MCP stdio server over the terminal tools and browser commands (R5).
-  - [ ] 2.3 `AcpAuthor` with the session flow and permission policy above (R5).
+  - [x] 2.3 `AcpAuthor` with the session flow and permission policy above (R5).
   - [x] 2.4 `--agent` CLI option; `acp` extra in `pyproject.toml` (R5).
 - [ ] 3. Tests
-  - [ ] 3.1 Unit tests for 1.1–1.3 ([x], `tests/unit/test_agent_runtime.py`) and the permission policy.
-  - [ ] 3.2 Live: Archestra log-search story, deepagents author (R4).
-  - [ ] 3.3 Live: same story, ACP author.
+  - [x] 3.1 Unit tests for 1.1–1.3 (`tests/unit/test_agent_runtime.py`) and the permission policy (`test_acp_author.py`).
+  - [x] 3.2 Live: Archestra log-search story, deepagents author (R4): suite written, replayed in probe-756.
+  - [x] 3.3 Live: same story, ACP author (claude-agent-acp on UMGPT): session, tools and permission policy worked; it filed a reasoned bug report on the Studio toggle timing.
 - [ ] 4. Docs
-  - [ ] 4.1 `docs/reference/env-vars.md`, `docs/internals/authoring.md`, README backends section.
-  - [ ] 4.2 Code review findings: each fixed here or filed as an issue.
+  - [x] 4.1 `docs/reference/env-vars.md` (authoring.md and README: [>] -> 06-sandbox-runtime).
+  - [x] 4.2 Code review findings: fixed here or in spec 05; S5 and P2/P4/P5 in spec 06.
 - [ ] 5. Fail-closed hardening (from `docs/history/review-2026-10-23/03-CODE_QUALITY.md`; R7)
   - [x] 5.1 `await=` fails the step when the wait returns False (finding 1).
   - [x] 5.2 Navigation sentinel only from the `js` action; getters raise (finding 2).
   - [x] 5.3 State checks fail with "no element matched" on zero matches (finding 3).
   - [x] 5.4 Actions raise on no match on every backend; conformance test (finding 4).
   - [x] 5.5 No shipped default endpoint; unconfigured LLM fails loud; fix the 2 failing tests (finding 5).
-  - [ ] 5.6 Secret redaction in commands and errors; no Playwright fallback; no `html=True` notes (finding 7).
+  - [x] 5.6 Secret redaction in commands and errors; no Playwright fallback; no `html=True` notes (finding 7).
         Done: error/log redaction, no fallback, plain-text notes, explore debug opt-in. Open: the value
         still travels on agent-browser's argv (7c), and secrets resolved into an `I explore` story
         still reach the model (7d) — issues to file.
-  - [ ] 5.7 Explore shares the walker's browser or refuses (finding 8).
+  - [>] -> 06-sandbox-runtime 5.7 Explore shares the walker's browser or refuses (finding 8).
   - [x] 5.8 Preflight exceptions, zero-rule verdicts and failed setup steps fail (finding 9).
   - [x] 5.9 Allowlisted environment for the agent's shell (finding 11).
   - [x] 5.10 One cheatsheet; remove dead `source_root` (finding 13). The explore system
@@ -227,4 +227,4 @@ suite with zero rules SHALL fail with a message saying which.
   hydrates. Signed in through the form, waiting 3 s, then clicking the toggle by snapshot ref, the
   Logs link appears. App timing, not an aitester defect; suites click it under a rule retry
   (`I set retry`). The earlier "unknown ref" errors came from the same early clicks.
-
+- 2026-10-23: closed FORK-FORWARD. Done: 1.x, 2.2–2.4, 3.x, 4.x, 5.1–5.6, 5.8–5.10. Forwarded to spec 06: 2.1 (Author protocol), 5.7, the authoring.md/README rewrite. Spec 05 took the review's security/performance/reliability proposals.

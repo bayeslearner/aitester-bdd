@@ -1,30 +1,42 @@
-"""MCP stdio server handed to an external authoring agent over ACP (spec 04 R5).
+"""The browser command layer both authors use, and the MCP stdio server that
+exposes it to an external agent over ACP (spec 04 R5, spec 05 S1).
 
-The agent gets exactly three tools and no shell:
+An authoring agent gets exactly three tools and no shell:
 
-  - `browser`           — one agent-browser command, run in aitester's session
+  - `browser`           — one or more agent-browser commands, run in aitester's session
   - `write_robot_suite` — terminal: write the parsed-and-checked suite
   - `report_bug`        — terminal: write the bug report
 
-The server runs in its own process, so the terminal outcome is written to a
-JSON state file with O_EXCL: the first successful terminal call wins and
+`run_browser_commands` is the one place agent-browser is invoked for an agent:
+it allowlists subcommands, pins the session, refuses session/profile/state
+flags, keeps `open` on the target's origin (S4), and fails a content getter at
+once when its selector matches nothing instead of letting the CLI block for
+30 s (P3). `get_counts` asks the page itself how many elements each selector
+matches, and reports an invalid selector as -1 rather than 0 (R6).
+
+The MCP server runs in its own process, so the terminal outcome is written to
+a JSON state file with O_EXCL: the first successful terminal call wins and
 `AcpAuthor` reads the file when the prompt turn ends.
 
 Run by `AcpAuthor` as:
-  python -m aitester_bdd.authoring.mcp_tools --session S --suite-path P \
-      --bug-path B --state-file F
+  python -m aitester_bdd.authoring.mcp_tools --session S --base-url U \
+      --suite-path P --bug-path B --state-file F
 """
 from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import shlex
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from aitester_bdd.authoring.tools import suite_problems
+
+log = logging.getLogger("aitester_bdd.authoring.mcp_tools")
 
 # agent-browser subcommands the author may use: reading and driving the page.
 # Session, profile, install and dashboard commands are excluded.
@@ -33,10 +45,86 @@ BROWSER_COMMANDS = frozenset({
     "wait", "eval", "find", "is", "hover", "focus", "select", "check",
     "uncheck", "scroll", "screenshot", "back", "forward", "reload", "read",
 })
+# Content getters that block ~30 s on a selector with no match.
+_CONTENT_GETTERS = frozenset({"text", "html", "attr", "value", "box"})
 _MAX_OUTPUT = 200_000
 
+# One copy of the command help both authors show the model.
+BROWSER_HELP = (
+    "## The browser tool\n\n"
+    "Every browser action is a call to the `browser` tool with one agent-browser "
+    "command line, or a list of them run in order (no `agent-browser` prefix):\n\n"
+    "```\n"
+    "open <url>                 # the app under test only; other origins are refused\n"
+    "snapshot -c -i             # compact, interactive elements, with @refs\n"
+    "get count '<css>'\nget text '<css>'\nget attr '<css>' <name>\n"
+    "click '<css|@ref>'\nfill '<css>' '<text>'\ntype '<css>' '<text>'\npress <key>\n"
+    "wait '<css>'|<ms>\neval '<js>'\nfind role button click --name 'Save'\n"
+    "```\n\n"
+    "Batch related steps in one call, e.g. [\"click @e4\", \"wait 1500\", \"snapshot -c -i\"]: "
+    "the list stops at the first failing command. Refs (@e3) change after every page "
+    "change: snapshot again before using one. Selectors in the suite must be plain CSS "
+    "(no :has-text, text=, :visible or >>); an `a | b` fallback needs spaces around the bar.\n\n"
+)
 
-def run_browser_command(command: str, *, session: str, timeout_s: int = 60) -> str:
+
+def _binary() -> str | None:
+    return shutil.which("agent-browser")
+
+
+def _same_origin(url: str, allowed: tuple[str, ...]) -> bool:
+    try:
+        u = urlsplit(url)
+    except ValueError:
+        return False
+    if not u.scheme:  # a path on the current origin
+        return True
+    for a in allowed:
+        b = urlsplit(a)
+        if (u.scheme, u.netloc.lower()) == (b.scheme, b.netloc.lower()):
+            return True
+    return False
+
+
+def allowed_origins(base_url: str | None) -> tuple[str, ...]:
+    """The target's origin plus AITESTER_ALLOWED_ORIGINS (comma-separated), for
+    sign-in redirects to another host."""
+    out = []
+    if base_url:
+        out.append(base_url)
+    out += [o.strip() for o in os.environ.get("AITESTER_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+    return tuple(out)
+
+
+def get_counts(selectors: list[str], *, session: str, timeout_s: int = 30) -> list[int]:
+    """How many elements each CSS selector matches on the current page, in one
+    eval; -1 for a selector the browser cannot parse (R6)."""
+    binary = _binary()
+    if not binary or not selectors:
+        return [-1] * len(selectors) if not binary else []
+    js = (
+        "(() => { const sels = " + json.dumps(selectors) + "; return JSON.stringify(sels.map(s => "
+        "{ try { return document.querySelectorAll(s).length; } catch (e) { return -1; } })); })()"
+    )
+    r = subprocess.run(
+        [binary, "--session", session, "eval", js],
+        capture_output=True, text=True, timeout=timeout_s, check=False,
+    )
+    out = (r.stdout or "").strip()
+    try:
+        parsed = json.loads(out)
+        if isinstance(parsed, str):
+            parsed = json.loads(parsed)
+        if isinstance(parsed, list) and len(parsed) == len(selectors):
+            return [int(x) for x in parsed]
+    except (ValueError, TypeError):
+        pass
+    raise RuntimeError(f"agent-browser eval for element counts failed: {(r.stderr or out)[:300]}")
+
+
+def run_browser_command(
+    command: str, *, session: str, timeout_s: int = 60, base_url: str | None = None,
+) -> str:
     """Run one agent-browser command line in `session`; return its output."""
     try:
         argv = shlex.split(command)
@@ -51,9 +139,30 @@ def run_browser_command(command: str, *, session: str, timeout_s: int = 60) -> s
         )
     if any(a in ("--session", "--profile", "--state", "--cdp") for a in argv):
         return "ERROR: session, profile, state and cdp flags are fixed by aitester"
-    binary = shutil.which("agent-browser")
+    if argv[0] == "open":
+        targets = [a for a in argv[1:] if not a.startswith("-")]
+        allowed = allowed_origins(base_url)
+        if base_url and targets and not _same_origin(targets[0], allowed):
+            return (
+                f"ERROR: open refused: {targets[0]!r} is not on the app under test "
+                f"({', '.join(allowed)}); set AITESTER_ALLOWED_ORIGINS for a sign-in host"
+            )
+    if argv[0] == "eval":
+        log.info("browser eval: %s", " ".join(argv[1:])[:300])
+    binary = _binary()
     if not binary:
         return "ERROR: agent-browser CLI not found on PATH"
+    if argv[0] == "get" and len(argv) >= 3 and argv[1] in _CONTENT_GETTERS:
+        sel = argv[2]
+        if not sel.startswith("@"):
+            try:
+                (n,) = get_counts([sel], session=session)
+            except RuntimeError as exc:
+                return f"ERROR: {exc}"
+            if n == -1:
+                return f"ERROR: {sel!r} is not a valid CSS selector in the browser"
+            if n == 0:
+                return f"ERROR: 0 elements match {sel!r}; snapshot and pick another selector"
     try:
         r = subprocess.run(
             [binary, "--session", session, *argv],
@@ -65,6 +174,23 @@ def run_browser_command(command: str, *, session: str, timeout_s: int = 60) -> s
     err = (r.stderr or "").strip()
     text = out if r.returncode == 0 else f"exit {r.returncode}\n{err or out}"
     return text[:_MAX_OUTPUT]
+
+
+def run_browser_commands(
+    commands: list[str], *, session: str, timeout_s: int = 60, base_url: str | None = None,
+) -> str:
+    """Run several commands in order; stop at the first that fails (P1).
+    Returns one block per command, or the single command's output as is."""
+    if len(commands) == 1:
+        return run_browser_command(commands[0], session=session, timeout_s=timeout_s, base_url=base_url)
+    parts = []
+    for i, c in enumerate(commands, 1):
+        out = run_browser_command(c, session=session, timeout_s=timeout_s, base_url=base_url)
+        parts.append(f"[{i}] {c}\n{out}")
+        if out.startswith("ERROR") or out.startswith("exit "):
+            parts.append(f"(stopped: command {i} failed; {len(commands) - i} not run)")
+            break
+    return "\n\n".join(parts)[:_MAX_OUTPUT]
 
 
 def record_terminal(state_file: Path, kind: str, path: Path) -> bool:
@@ -85,7 +211,10 @@ def read_terminal(state_file: Path) -> tuple[str | None, Path | None]:
     return data.get("kind"), Path(data["path"]) if data.get("path") else None
 
 
-def build_server(*, session: str, suite_path: Path, bug_path: Path, state_file: Path):
+def build_server(
+    *, session: str, suite_path: Path, bug_path: Path, state_file: Path,
+    base_url: str | None = None, engine: str = "agent-browser",
+):
     from mcp.server.mcpserver import MCPServer
 
     server = MCPServer(
@@ -97,22 +226,30 @@ def build_server(*, session: str, suite_path: Path, bug_path: Path, state_file: 
         ),
     )
 
-    @server.tool(description=(
-        "Run one agent-browser command in the test's browser session and return its "
-        "output, e.g. 'open https://app/', 'snapshot -c -i', 'click @e3', "
-        "'get count .row', 'fill #q hello', 'eval \"document.title\"'. Add --json for JSON."
-    ))
-    def browser(command: str) -> str:
-        return run_browser_command(command, session=session)
+    def probe(selectors: list[str]) -> list[int]:
+        return get_counts(selectors, session=session)
 
     @server.tool(description=(
-        "TERMINAL. Write the complete .robot suite. It is parsed first; a parse error "
-        "comes back so you can fix it. On success, stop: the task is done."
+        "Run agent-browser commands in the test's browser session and return their output. "
+        "Pass one command, or a list run in order that stops at the first failure, e.g. "
+        "['open https://app/', 'wait 1500', 'snapshot -c -i'], 'click @e3', "
+        "'get count .row', 'fill #q hello', 'eval \"document.title\"'. Add --json for JSON."
+    ))
+    def browser(command: str | None = None, commands: list[str] | None = None) -> str:
+        cmds = list(commands or []) + ([command] if command else [])
+        if not cmds:
+            return "ERROR: give command or commands"
+        return run_browser_commands(cmds, session=session, base_url=base_url)
+
+    @server.tool(description=(
+        "TERMINAL. Write the complete .robot suite. It is parsed and its selectors are "
+        "checked first (plain CSS only; each must parse in the browser); any problem comes "
+        "back so you can fix it. On success, stop: the task is done."
     ))
     def write_robot_suite(content: str) -> str:
-        problems = suite_problems(content)
+        problems = suite_problems(content, engine=engine, probe=probe)
         if problems:
-            return "ERROR: not a runnable suite: " + "; ".join(problems[:5])
+            return "ERROR: not a runnable suite: " + "; ".join(problems[:8])
         if state_file.exists():
             return "REFUSED: this run already ended. Stop now."
         suite_path.parent.mkdir(parents=True, exist_ok=True)
@@ -145,9 +282,12 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--suite-path", required=True, type=Path)
     ap.add_argument("--bug-path", required=True, type=Path)
     ap.add_argument("--state-file", required=True, type=Path)
+    ap.add_argument("--base-url", default=None)
+    ap.add_argument("--engine", default="agent-browser")
     a = ap.parse_args(argv)
     build_server(
         session=a.session, suite_path=a.suite_path, bug_path=a.bug_path, state_file=a.state_file,
+        base_url=a.base_url, engine=a.engine,
     ).run("stdio")
 
 

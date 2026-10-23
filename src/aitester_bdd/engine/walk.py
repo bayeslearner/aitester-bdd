@@ -589,6 +589,11 @@ def _eval_action(browser: BrowserAdapter, action: Action, *, scope: str = "") ->
         browser.call_keyword(action.target, action.options.get("args", []))
     elif kind == "shell":
         import subprocess as _sp
+        if not (_ACTIVE_CTX and _ACTIVE_CTX.allow_shell):
+            raise PermissionError(
+                "shell actions are disabled: a suite's shell command runs on the test machine at "
+                "replay time; set AITESTER_ALLOW_SHELL=1 for a suite that needs them (spec 05 S3)"
+            )
         cmd = action.target or ""
         timeout_s = int((action.options or {}).get("timeout_ms", "60000")) / 1000.0
         try:
@@ -612,6 +617,14 @@ def _eval_action(browser: BrowserAdapter, action: Action, *, scope: str = "") ->
             browser._last_llm_response = "(LLM not configured)"
     else:
         log.warning("unknown action %s", kind)
+
+
+_ACTIVE_CTX: WalkContext | None = None
+
+
+def _set_active_ctx(ctx: WalkContext | None) -> None:
+    global _ACTIVE_CTX
+    _ACTIVE_CTX = ctx
 
 
 def _await_after_action(browser: BrowserAdapter, action: Action) -> None:
@@ -1004,8 +1017,8 @@ def _walk_rule(
     if run_deadline is not None and time.time() > run_deadline:
         return RuleResult(
             rule_name=rule.name, scenario_name=scenario.name, passed=False,
-            failure_step_kind="run_timeout",
-            failure_message="global run timeout exceeded",
+            failure_step_kind="run_budget",
+            failure_message="run budget exhausted before this rule; rule not run",
             duration_ms=(time.time() - start) * 1000,
         )
 
@@ -1771,6 +1784,100 @@ class StateSetupError(RuntimeError):
     """A suite-level setup step (sign-in, consent) failed."""
 
 
+class Secret(str):
+    """A credential value that prints as *** everywhere; `.reveal()` gives the value."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "***"
+
+    def __str__(self) -> str:
+        return "***"
+
+    def reveal(self) -> str:
+        return str.__str__(self)
+
+
+def resolve_secret_ref(value: str) -> str:
+    """Resolve a setup value. `env:NAME` reads the variable and returns a Secret;
+    any other text is the literal value (spec 05 S2). An unset variable raises
+    StateSetupError naming the variable, never a value."""
+    if value.startswith("env:"):
+        name = value[4:].strip()
+        raw = os.environ.get(name)
+        if raw is None or raw == "":
+            raise StateSetupError(f"setup value env:{name}: the variable is not set")
+        return Secret(raw)
+    if value.startswith("secret:"):
+        raise StateSetupError(f"setup value {value!r}: no secret store is configured (only env:NAME is supported)")
+    return value
+
+
+def _run_setup_actions(browser: BrowserAdapter, actions: list[dict[str, str]], *, what: str) -> None:
+    """Run state-setup-grammar actions in order; raise StateSetupError on the first failure."""
+    for sa in actions:
+        action = sa.get("action", "")
+        try:
+            css = sa.get("css", "")
+            # A single-page app renders its form after `open` returns: wait for
+            # the step's element before acting on it.
+            if css and action in ("input", "password", "click", "wait") and not browser.wait_for_elements_state(
+                css, "attached", timeout_ms=DEFAULT_OBSERVATION_TIMEOUT_MS,
+            ):
+                raise LookupError(f"no element matched {css!r} within {DEFAULT_OBSERVATION_TIMEOUT_MS} ms")
+            if action == "open":
+                browser.open(sa.get("url", ""))
+            elif action in ("input", "password"):
+                value = resolve_secret_ref(sa.get("value", ""))
+                secret = action == "password" or isinstance(value, Secret)
+                _type_and_confirm(browser, css, value.reveal() if isinstance(value, Secret) else value, secret=secret)
+            elif action == "click":
+                browser.click(css)
+            elif action == "wait":
+                pass  # the attach wait above is the whole step: e.g. a signed-in marker
+            elif action == "api":
+                _api_call(sa.get("method", "DELETE"), sa.get("path", ""))
+            else:
+                raise ValueError(f"unknown action {action!r}")
+        except StateSetupError:
+            raise
+        except Exception as exc:
+            raise StateSetupError(
+                f"{what} step {action!r} on {sa.get('css') or sa.get('url') or sa.get('path') or ''!r} "
+                f"failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
+
+def _api_call(method: str, path: str) -> None:
+    """A direct API call for clean-up: AITESTER_API_BASE_URL + path, bearer AITESTER_API_TOKEN."""
+    import httpx
+
+    base = os.environ.get("AITESTER_API_BASE_URL", "").rstrip("/")
+    if not base:
+        raise StateSetupError("action=api needs AITESTER_API_BASE_URL")
+    headers = {}
+    token = os.environ.get("AITESTER_API_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    r = httpx.request(method.upper(), base + path, headers=headers, timeout=30.0)
+    if r.status_code >= 400:
+        raise RuntimeError(f"{method.upper()} {path} answered {r.status_code}")
+
+
+def run_cleanup(browser: BrowserAdapter, verification: Verification) -> list[str]:
+    """Run the suite's clean-up actions after the walk, even when it aborted
+    (spec 05 R4). Every action is attempted; failures are returned, not raised."""
+    failures: list[str] = []
+    for sa in verification.cleanup.actions:
+        try:
+            _run_setup_actions(browser, [sa], what="cleanup")
+        except Exception as exc:
+            failures.append(str(exc))
+            log.warning("cleanup: %s", exc)
+    return failures
+
+
 def _run_state_setup(browser: BrowserAdapter, verification: Verification) -> None:
     """Execute suite-level state setup (auth, consent) before any scenario.
 
@@ -1782,6 +1889,8 @@ def _run_state_setup(browser: BrowserAdapter, verification: Verification) -> Non
       - action=password css=... value=...  → fill text (treated as secret)
       - action=click css=...     → click
       - action=wait css=...      → wait for an element (e.g. a signed-in marker)
+    Values may be `env:NAME`, resolved from the environment and never logged.
+    When `skip_when` is set it must appear after the actions, or setup fails.
 
     A failed or unknown setup step raises StateSetupError naming the step:
     every scenario after it would run signed out (spec 04 R7, review
@@ -1797,32 +1906,17 @@ def _run_state_setup(browser: BrowserAdapter, verification: Verification) -> Non
                 return
         except Exception:
             pass
-    for sa in ss.actions:
-        action = sa.get("action", "")
-        try:
-            css = sa.get("css", "")
-            # A single-page app renders its form after `open` returns: wait for
-            # the step's element before acting on it.
-            if css and action in ("input", "password", "click", "wait") and not browser.wait_for_elements_state(
-                css, "attached", timeout_ms=DEFAULT_OBSERVATION_TIMEOUT_MS,
-            ):
-                raise LookupError(f"no element matched {css!r} within {DEFAULT_OBSERVATION_TIMEOUT_MS} ms")
-            if action == "open":
-                browser.open(sa.get("url", ""))
-            elif action in ("input", "password"):
-                _type_and_confirm(browser, css, sa.get("value", ""), secret=action == "password")
-            elif action == "click":
-                browser.click(css)
-            elif action == "wait":
-                pass  # the attach wait above is the whole step: e.g. a signed-in marker
-            else:
-                raise ValueError(f"unknown action {action!r}")
-        except Exception as exc:
+    _run_setup_actions(browser, ss.actions, what="state setup")
+    # skip_when is also the marker that proves setup finished (spec 05 R2): on a
+    # single-page app the last click returns before the signed-in page exists.
+    if ss.skip_when:
+        if not browser.wait_for_elements_state(ss.skip_when, "attached", timeout_ms=DEFAULT_OBSERVATION_TIMEOUT_MS):
             raise StateSetupError(
-                f"state setup step {action!r} on {sa.get('css') or sa.get('url') or ''!r} "
-                f"failed: {type(exc).__name__}: {exc}"
-            ) from exc
-    browser.wait_for_load_state("networkidle", timeout="10s")
+                f"state setup finished but its marker {ss.skip_when!r} did not appear within "
+                f"{DEFAULT_OBSERVATION_TIMEOUT_MS} ms"
+            )
+    else:
+        browser.wait_for_load_state("networkidle", timeout="10s")
 
 
 def _build_default_registry(walk_log: Any, ctx: WalkContext, browser: Any = None):
@@ -1889,8 +1983,14 @@ def walk_verification(verification: Verification, ctx: WalkContext | None = None
 
     if ctx is None:
         ctx = WalkContext.from_env()
+    _set_active_ctx(ctx)
 
-    run_deadline = time.time() + ctx.run_timeout_s if ctx.run_timeout_s else None
+    # The run budget: the suite's own `I set run timeout` wins over AITESTER_RUN_TIMEOUT;
+    # 0 means no budget. Rules past the deadline are reported as not run (spec 05 R3).
+    budget_s = verification.run_timeout_s or ctx.run_timeout_s
+    run_deadline = time.time() + budget_s if budget_s else None
+    if run_deadline:
+        log.info("run budget: %s s", budget_s)
 
     walk_log = WalkLog(sink_path=_output_dir() / "walk_log.jsonl")
 
@@ -1976,6 +2076,13 @@ def walk_verification(verification: Verification, ctx: WalkContext | None = None
         # runs accumulate into single artifact files.
         _write_artifacts(verification)
     finally:
+        try:
+            cleanup_failures = run_cleanup(browser, verification) if verification.cleanup.actions else []
+        except Exception as exc:  # the browser may be gone
+            cleanup_failures = [f"cleanup could not run: {exc}"]
+        if cleanup_failures:
+            verdict.cleanup_failures = cleanup_failures
+        _set_active_ctx(None)
         browser.close()
         walk_log.close()
     return verdict

@@ -24,7 +24,8 @@ class WalkContext:
 
     headed: bool = False
     step_delay_ms: int = 0
-    run_timeout_s: int = 300
+    run_timeout_s: int = 0  # 0 = no global budget (spec 05 R3); per-step timeouts still apply
+    allow_shell: bool = False  # suite `shell` actions run only when opted in (spec 05 S3)
     disabled_aspects: frozenset[str] = field(default_factory=frozenset)
     shot_every_step: bool = False
 
@@ -33,7 +34,8 @@ class WalkContext:
         """Build from environment variables (the default entry path)."""
         headed = os.environ.get("AITESTER_HEADED", "").strip() in ("1", "true", "yes")
         step_delay_ms = int(os.environ.get("AITESTER_STEP_DELAY_MS", "0"))
-        run_timeout_s = int(os.environ.get("AITESTER_RUN_TIMEOUT", "300"))
+        run_timeout_s = int(os.environ.get("AITESTER_RUN_TIMEOUT", "0"))
+        allow_shell = os.environ.get("AITESTER_ALLOW_SHELL", "").strip() in ("1", "true", "yes")
         disabled = frozenset(
             a.strip()
             for a in os.environ.get("AITESTER_DISABLE_ASPECTS", "").split(",")
@@ -44,6 +46,7 @@ class WalkContext:
             headed=headed,
             step_delay_ms=step_delay_ms,
             run_timeout_s=run_timeout_s,
+            allow_shell=allow_shell,
             disabled_aspects=disabled,
             shot_every_step=shot_every_step,
         )

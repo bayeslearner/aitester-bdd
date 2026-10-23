@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-23
+
+Hardening after the first authoring runs against a real single-page app (specs 04 and 05).
+
+### Security
+- The in-process author has no shell any more: it drives the page through one `browser` tool
+  (allowlisted agent-browser commands in a pinned session), the same layer the ACP author uses.
+  `open` is pinned to the app under test (`AITESTER_ALLOWED_ORIGINS` for a sign-in host).
+- Credentials by name: state-setup values may be `env:NAME`, resolved by Python and masked in
+  logs; `aitester author --signin FILE` signs the browser in before the agent starts and writes
+  the same block into the authored suite.
+- A suite's `shell` actions are refused at replay unless `AITESTER_ALLOW_SHELL=1`; the author
+  refuses them unless the suite carries `# allow-shell`.
+- The agent's environment is an allowlist; secrets are redacted from agent-browser errors; no
+  shipped default model endpoint (`AITESTER_LLM_MODEL` is required).
+
+### Reliability
+- Fail closed: `await=`, checks and actions on a missing element, a closed page, a zero-rule
+  verdict, a failing preflight and a failing setup step all fail with a message.
+- `write_robot_suite` rejects Playwright-only selectors (`:has-text`, `text=`, `:visible`,
+  `>>`), fallbacks without spaces, exact counts above 1 (unless `# exact-count: intended`), and
+  selectors the live browser cannot parse.
+- `agent-browser` `get_count` asks the page and raises on an invalid selector instead of
+  answering 0.
+- `skip_when` is also the state-setup success marker; setup fails if it does not appear.
+- The global run timeout is opt-in (`AITESTER_RUN_TIMEOUT`, default 0; `And I set run timeout N s`
+  in a suite); rules past the budget are reported as not run.
+- `And I configure cleanup …` actions run after the suite even when it aborted (UI grammar plus
+  `action=api method=DELETE path=…`).
+- deepagents pinned to 0.7.x; terminal state kept in Python (first call wins); per-call model
+  timeout 60 s / 3 retries with a progress line per step.
+
+### Added
+- External authors over ACP: `aitester author --agent "acp:<command>"` (`[acp]` extra).
+- `browser` tool accepts a list of commands run in order, stopping at the first failure.
+- Content getters fail at once on a selector with no match instead of blocking 30 s.
+
+### Changed
+- Dependency bounds: `deepagents>=0.7.31,<0.8`, `langgraph>=1.2,<2`, `langchain>=1.3,<2`,
+  `langchain-openai>=1.1,<2`; `httpx` declared.
+- `aitester author` exits 2 after a bug report.
+
 ## [0.4.2] - 2026-07-07
 
 Make the fluid agent provider-agnostic and delete dead authoring code —

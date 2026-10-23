@@ -30,6 +30,7 @@ class RuleResult:
 class Verdict:
     verification_name: str = ""
     results: list[RuleResult] = field(default_factory=list)
+    cleanup_failures: list[str] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:

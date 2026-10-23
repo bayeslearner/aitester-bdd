@@ -9,7 +9,6 @@ Each one captures one record per iteration into the rule's artifacts.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from tests.unit.test_walker_with_fake_browser import FakeBrowser
 

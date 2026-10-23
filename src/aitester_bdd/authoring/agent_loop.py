@@ -43,28 +43,13 @@ _EXPLORE_SYSTEM_PROMPT = """You are a fluid test agent. Your job is to drive a w
 CRITICAL RULES:
 1. READ THE FULL STORY CAREFULLY. Count how many distinct actions/verifications are described. You MUST perform ALL of them before calling journey_complete. If the story says "login, navigate, click a case, open Actions, click Defer, type reason, confirm, verify toast" — that is 8 steps and you must do all 8.
 2. Do NOT call journey_complete after just the first few steps. If you've only logged in and navigated but the story asks you to also interact with a case — YOU ARE NOT DONE.
-3. Use agent-browser CLI commands via the execute tool. Chain commands with && for efficiency.
+3. Drive the page with the `browser` tool: one agent-browser command, or a list run in order.
 4. After each action, verify it worked (snapshot, check URL, check element state).
 5. If a step fails after reasonable retries (2-3 attempts), call journey_blocked with details. A typed URL that redirects is not a failure by itself: reach the page through the app's own navigation (sidebar, menus, mode toggles such as an 'AI' / 'Studio' switch) before giving up.
 6. Only call journey_complete when EVERY action and EVERY verification in the story has been performed. Re-read the story before calling journey_complete to make sure you haven't skipped anything.
 7. Your journey_complete notes must describe each step you took and what you observed — these notes are the test evidence.
 
-agent-browser quick reference:
-  open <url> --json | snapshot -c -i --json | click '<css|@ref>' --json
-  fill '<css>' '<text>' --json | type '<css>' '<text>' --json
-  press '<key>' --json | wait '<css>'|<ms> --json | eval '<js>' --json
-  get count|text|html|attr '<css>' --json
-  find role|text|label|placeholder|testid <value> click|fill [text] --json
-
-Snapshot refs (@e1, @e2) are valid for click/fill/type/get commands.
-CSS selectors are valid everywhere. Prefer data-testid > @ref > CSS.
-
->>> SELECTOR PROBING — avoid 30s stalls <<<
-`agent-browser get text/html/attr/value/box` BLOCKS ~30s when the selector
-matches 0 elements. Before reading content, confirm the selector exists with
-`get count <sel>` or `is visible <sel>` or `eval` (all instant). Only call
-`get text/html/attr` on a selector you've confirmed has count > 0. Never probe
-a guessed selector with a content getter.
+Selectors in your notes and in any suite must be plain CSS (no :has-text, text=, :visible); refs (@e1) come from snapshot and change after every page change.
 """
 
 
@@ -95,8 +80,8 @@ _EXPLORE_SHOT_BLOCK_CLI = """
 ## Screenshot trail (REQUIRED this run)
 Screenshot mode is ON. After EVERY milestone (initial page, post-login, each
 navigation, each key action, final state) run
-`agent-browser screenshot aitester-shot-<n>.png` (increment <n> each time,
-starting at 1). These PNGs are the visual proof of the journey.
+the browser tool command `screenshot aitester-shot-<n>.png` (increment <n> each
+time, starting at 1). These PNGs are the visual proof of the journey.
 """
 
 
@@ -153,31 +138,7 @@ def _agent_env(browser_session: str) -> dict[str, str]:
     return env
 
 
-# The agent-browser commands both CLI prompts teach. One copy (review finding 13).
-_AGENT_BROWSER_CHEATSHEET = (
-    "## agent-browser cheatsheet (inline — do NOT run --help)\n\n"
-    "```\n"
-    "agent-browser open <url> --json\n"
-    "agent-browser snapshot -c -i --json   # compact, interactive elements only, with @refs\n"
-    "agent-browser get count '<css>' --json\n"
-    "agent-browser get text '<css>' --json\n"
-    "agent-browser get html '<css>' --json     # CSS only — NOT @refs\n"
-    "agent-browser get attr '@e3'|'<css>' '<name>' --json\n"
-    "agent-browser click '<css|@ref>' --json\n"
-    "agent-browser fill '<css>' '<text>' --json     # clear+fill, native React events\n"
-    "agent-browser type '<css>' '<text>' --json     # append+type\n"
-    "agent-browser press '<key>' --json    # Enter, Tab, Escape, Control+a, ArrowDown\n"
-    "agent-browser wait '<css>'|<ms> --json\n"
-    "agent-browser eval '<js>' --json   # arrow fn or expression; e.g. '() => document.title' or '1+1'\n"
-    "agent-browser find <locator> <value> <action> [text] --json\n"
-    "  locators: role | text | label | placeholder | alt | title | testid | first | last | nth\n"
-    "  actions:  click | fill | check | hover\n"
-    "  examples: find placeholder 'Username' fill admin\n"
-    "            find role button click --name 'Sign in'\n"
-    "            find testid login-form click\n"
-    "```\n\n"
-    "Chain commands with `&&` in one execute call — way fewer LLM round-trips.\n\n"
-)
+# The browser tool help both authors show the model lives in mcp_tools.BROWSER_HELP.
 
 # Spec 04 R4: in a single-page app a typed URL often redirects (mode toggles,
 # role-gated layouts). That is not a bug until the app's own navigation fails.
@@ -227,20 +188,6 @@ For EACH step, decide PIN vs FLUID and record that choice in the todo:
            (data-dependent rows, dynamic content, state verification).
 This PIN/FLUID judgment MUST respect the pinning mode stated above; it refines
 that policy per step, it does not override it.
-"""
-
-
-# Appended to the author / explore_and_author system prompts (agent-browser/CLI
-# path). Mirrors the _EXPLORE_SYSTEM_PROMPT probing note so the author agent,
-# which also drives the agent-browser CLI, avoids the 30s content-getter stall.
-_AUTHOR_PROBING_BLOCK = """
-
-## Selector probing — avoid 30s stalls
-`agent-browser get text/html/attr/value/box` BLOCKS ~30s when the selector
-matches 0 elements. Before reading content, confirm the selector exists with
-`get count <sel>` or `is visible <sel>` or `eval` (all instant). Only call
-`get text/html/attr` on a selector you've confirmed has count > 0. Never probe a
-guessed selector with a content getter.
 """
 
 
@@ -366,10 +313,10 @@ def build_system_prompt(mode: str, *, pinning: str = "auto") -> str:
             f"Mixed output (some I define rule blocks + some I explore calls) is valid.\n\n"
             f"---\n\n"
         )
-        return preamble + base_skill + planning_block + _AUTHOR_PROBING_BLOCK
+        return preamble + base_skill + planning_block
 
     # Default: pure author mode (CLI aitester author)
-    return base_skill + planning_block + _AUTHOR_PROBING_BLOCK
+    return base_skill + planning_block
 
 
 def _build_llm(
@@ -545,10 +492,16 @@ def _author_once(
     return a result with ok=False and the transcript for inspection.
     """
     from deepagents import create_deep_agent
-    from deepagents.backends import LocalShellBackend
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from aitester_bdd.authoring.tools import TerminalState, build_tools, session_id, stop_when_done
+    from aitester_bdd.authoring.mcp_tools import BROWSER_HELP, get_counts
+    from aitester_bdd.authoring.tools import (
+        TerminalState,
+        build_browser_tool,
+        build_tools,
+        session_id,
+        stop_when_done,
+    )
 
     started = time.monotonic()
     llm = _build_llm(model=llm_model, base_url=llm_base_url, api_key=llm_api_key)
@@ -557,31 +510,29 @@ def _author_once(
     slug = _slugify(story)[:60] or "untitled"
     bug_report_path = bug_report_dir / f"{slug}.md"
 
+    browser_session = session_id()
     state = TerminalState()
-    tools = build_tools(state, suite_path=suite_path, bug_report_path=bug_report_path)
+    tools = build_tools(
+        state, suite_path=suite_path, bug_report_path=bug_report_path, engine=engine,
+        probe=lambda sels: get_counts(sels, session=browser_session),
+    )
     system_prompt = build_system_prompt(mode, pinning=pinning)
 
     # When inside RF with Playwright, add Playwright browser tools so the
-    # authoring agent uses the same browser session as the walker. The
-    # LocalShellBackend still provides `execute` for file ops (read, glob).
+    # authoring agent uses the same browser session as the walker; otherwise the
+    # agent drives the page through the `browser` tool. No shell either way
+    # (spec 05 S1): deepagents' default in-memory backend holds its scratch files.
     if _is_inside_rf():
         from aitester_bdd.authoring.playwright_tools import build_playwright_browser_tools
         tools = tools + build_playwright_browser_tools()
-
-    backend = LocalShellBackend(
-        root_dir=str(source_root) if source_root else None,
-        env=_agent_env(session_id()),
-        inherit_env=False,
-        timeout=120,
-        max_output_bytes=200_000,
-    )
+    else:
+        tools = tools + [build_browser_tool(session=browser_session, base_url=base_url)]
 
     agent = create_deep_agent(
         model=llm,
         tools=tools,
         system_prompt=system_prompt,
         middleware=[*_planning_middleware(), stop_when_done(state)],
-        backend=backend,
         checkpointer=InMemorySaver(),
     )
 
@@ -589,7 +540,7 @@ def _author_once(
         f"Story: {story}\n\n"
         f"Base URL: {base_url}\n\n"
         f"You are authoring an aitester-bdd .robot test suite for this story.\n\n"
-        + _AGENT_BROWSER_CHEATSHEET
+        + BROWSER_HELP
         + "## Rules\n\n"
         "  - Every selector in the .robot must come from a real attribute observed on the live page — never invent.\n"
         "  - Snapshot `name='X'` is the ACCESSIBLE LABEL, not the HTML `name=` attribute. Use `get attr` to read the real HTML attribute.\n"
@@ -701,13 +652,19 @@ def explore_with_agent(
     that share the walker's RF Browser instance. Same page, same cookies,
     same DOM state. No subprocess, no session handoff.
 
-    When running standalone (no RF context): falls back to agent-browser
-    CLI via LocalShellBackend.
+    When running standalone (no RF context): drives the agent-browser CLI
+    through the `browser` tool (no shell).
     """
     from deepagents import create_deep_agent
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from aitester_bdd.authoring.tools import TerminalState, build_explore_tools, stop_when_done
+    from aitester_bdd.authoring.mcp_tools import BROWSER_HELP
+    from aitester_bdd.authoring.tools import (
+        TerminalState,
+        build_browser_tool,
+        build_explore_tools,
+        stop_when_done,
+    )
 
     state = TerminalState()
     llm = _build_llm(model=llm_model, base_url=llm_base_url, api_key=llm_api_key)
@@ -726,36 +683,22 @@ def explore_with_agent(
         system_prompt = PLAYWRIGHT_EXPLORE_PROMPT + (
             _EXPLORE_PLANNING_BLOCK if _planning_enabled() else ""
         ) + (_EXPLORE_SHOT_BLOCK_RF if _shot_every_step_enabled() else "")
-        backend = None
     else:
-        # Fallback: agent-browser CLI via shell (standalone / aitester author)
-        from deepagents.backends import LocalShellBackend
-
+        # Standalone: the agent-browser CLI through the `browser` tool, no shell.
         from aitester_bdd.authoring.tools import session_id
 
-        tools = terminal_tools
+        tools = terminal_tools + [build_browser_tool(session=session or session_id(), base_url=base_url)]
         system_prompt = _explore_system_prompt() + (
             _EXPLORE_SHOT_BLOCK_CLI if _shot_every_step_enabled() else ""
         )
-        backend = LocalShellBackend(
-            root_dir=str(source_root) if source_root else None,
-            env=_agent_env(session or session_id()),
-            inherit_env=False,
-            timeout=120,
-            max_output_bytes=200_000,
-        )
 
-    agent_kwargs = {
-        "model": llm,
-        "tools": tools,
-        "system_prompt": system_prompt,
-        "middleware": [*_planning_middleware(), stop_when_done(state)],
-        "checkpointer": InMemorySaver(),
-    }
-    if backend is not None:
-        agent_kwargs["backend"] = backend
-
-    agent = create_deep_agent(**agent_kwargs)
+    agent = create_deep_agent(
+        model=llm,
+        tools=tools,
+        system_prompt=system_prompt,
+        middleware=[*_planning_middleware(), stop_when_done(state)],
+        checkpointer=InMemorySaver(),
+    )
 
     import re
     numbered = re.findall(r'\d+\)', story)
@@ -780,7 +723,7 @@ def explore_with_agent(
     else:
         user_message = (
             preamble
-            + _AGENT_BROWSER_CHEATSHEET
+            + BROWSER_HELP
             + "## Rules\n\n"
             "  - Complete the journey end-to-end. Do not stop early.\n"
             + _NAVIGATION_RULE

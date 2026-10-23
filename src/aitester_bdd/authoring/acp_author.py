@@ -36,29 +36,17 @@ from pathlib import Path
 from typing import Any
 
 from aitester_bdd.authoring.agent_loop import (
+    _NAVIGATION_RULE,
     AuthoringResult,
     _agent_env,
-    _NAVIGATION_RULE,
     _slugify,
     load_skill,
 )
-from aitester_bdd.authoring.mcp_tools import read_terminal
+from aitester_bdd.authoring.mcp_tools import BROWSER_HELP, read_terminal
 from aitester_bdd.authoring.tools import session_id
 
 _MCP_SERVER_NAME = "aitester"
 
-_BROWSER_HELP = (
-    "## The browser tool\n\n"
-    "Every browser action is one call to the `browser` tool with an agent-browser "
-    "command line (no `agent-browser` prefix needed):\n\n"
-    "```\n"
-    "open <url>\nsnapshot -c -i            # compact, interactive elements, with @refs\n"
-    "get count '<css>'\nget text '<css>'\nget attr '<css>' <name>\n"
-    "click '<css|@ref>'\nfill '<css>' '<text>'\npress <key>\n"
-    "wait '<css>'|<ms>\neval '<js>'\nfind role button click --name 'Save'\n"
-    "```\n\n"
-    "Refs (@e3) change after every page change: snapshot again before using one.\n\n"
-)
 
 
 def allow_tool_call(title: str | None, raw_name: str | None = None) -> bool:
@@ -78,7 +66,7 @@ def build_prompt(*, story: str, base_url: str, engine: str) -> str:
         + f"Story: {story}\n\nBase URL: {base_url}\n\n"
         "You are authoring an aitester-bdd .robot test suite for this story. Use only "
         f"the `{_MCP_SERVER_NAME}` tools; other tools are refused.\n\n"
-        + _BROWSER_HELP
+        + BROWSER_HELP
         + "## Rules\n\n"
         "  - Every selector in the .robot must come from a real attribute observed on the live page — never invent.\n"
         "  - Stop exploring as soon as every selector is grounded, then write the suite.\n"
@@ -164,7 +152,13 @@ async def _author_async(
 ) -> AuthoringResult:
     from acp import PROTOCOL_VERSION, spawn_agent_process
     from acp.helpers import text_block
-    from acp.schema import AuthCapabilities, ClientCapabilities, EnvVariable, Implementation, McpServerStdio
+    from acp.schema import (
+        AuthCapabilities,
+        ClientCapabilities,
+        EnvVariable,
+        Implementation,
+        McpServerStdio,
+    )
 
     started = time.monotonic()
     argv = shlex.split(agent_command)
@@ -185,6 +179,8 @@ async def _author_async(
             "--suite-path", str(suite_path.resolve()),
             "--bug-path", str(bug_path.resolve()),
             "--state-file", str(state_file),
+            "--base-url", base_url,
+            "--engine", engine,
         ],
         env=[EnvVariable(name=k, value=v) for k, v in _agent_env(browser_session).items()],
     )

@@ -5,8 +5,6 @@ return. No real API calls — we inject a fake LLM via the walker's
 """
 from __future__ import annotations
 
-from typing import Any
-
 from tests.unit.test_walker_with_fake_browser import FakeBrowser
 
 

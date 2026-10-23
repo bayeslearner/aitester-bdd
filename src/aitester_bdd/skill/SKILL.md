@@ -63,10 +63,10 @@ Do not use when: there's no live target to drive (no URL); the user is hand-writ
 
 ### One explorer, three runtime backends
 
-**Exploration is via the `agent-browser` CLI** — drive it through bash
-(`execute "agent-browser <subcmd> --json"`). The CLI maintains a
-persistent session for this authoring run; chain commands with `&&` to
-batch related steps.
+**Exploration is through the `browser` tool**: one agent-browser command
+line, or a list of them run in order (it stops at the first failure). The tool
+pins the session, refuses other origins and session flags, and fails a content
+getter at once when its selector matches nothing. There is no shell.
 
 **Run-time backend is your choice, declared in the suite.** All three
 runtime backends accept CSS selectors, so the same authored `.robot`
@@ -81,45 +81,17 @@ ${ENGINE}    agent-browser   # or "playwright" or "nodriver"
 walker picks the matching backend. Picking a backend doesn't change
 the authored suite. CSS is the lingua franca of all three.
 
-### Explorer — the `agent-browser` CLI via Bash
+### Explorer — the `browser` tool
 
-Your eyes and hands during Explore. Use the `execute` tool (bash)
-to call `agent-browser` directly. Chain with `&&` to batch related
-steps in a single shell call — way fewer LLM round-trips than one
-tool per operation.
+Your eyes and hands during Explore. Call `browser` with a command line such as
+`snapshot -c -i` or a list such as `["click @e4", "wait 1500", "snapshot -c -i"]`.
 
-```bash
-# Navigate + snapshot in one shell call
-agent-browser open http://localhost:5173 && agent-browser snapshot -c -i --json
-
-# Probe a candidate selector
-agent-browser get count '[data-testid="case-row"]' --json
-agent-browser get attr '@e3' 'data-testid' --json
-agent-browser get text '.justify-end .rounded-2xl' --json
-
-# Locate-and-act in one Playwright-style call (no CSS synthesis)
-agent-browser find placeholder "Username" fill admin
-agent-browser find role button click --name "Sign in"
-agent-browser find label "Email" fill user@example.com
-agent-browser find testid login-form click
-
-# Wait for an element to appear OR ms-sleep
-agent-browser wait '[data-testid="chat-input"]'
-agent-browser wait 2000
-
-# Free-form JS escape hatch
-agent-browser eval '() => document.title'
-```
-
-The CLI returns a JSON envelope (`{success, data, error}`) with the
-`--json` flag. `snapshot -c -i` gives a compact a11y tree with `@ref`
-markers (`- button "Sign in" [ref=e3]`). The accessible **name** is
-the visible label / aria-label / placeholder — **not** the HTML `name`
-attribute. To get the HTML `name` attribute, use
-`agent-browser get attr '@e3' 'name'`.
-
-**Session is pinned automatically** via `AGENT_BROWSER_SESSION` in the
-env — every shell call shares the same browser, cookies, and storage.
+Selectors you put in the suite must be plain CSS that the live browser parses:
+no `:has-text()`, `text=`, `:visible`, `:nth-match()` or `>>`; an `a | b`
+fallback needs spaces around the bar; `count … equals N` only for 0 and 1
+(use `is at least` otherwise, or add `# exact-count: intended` when the story
+names the number). `write_robot_suite` checks all of this and sends back what
+to fix.
 
 ### Authoring workflow — refs during explore, CSS at write
 

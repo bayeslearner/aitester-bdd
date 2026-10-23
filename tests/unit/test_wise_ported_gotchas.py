@@ -12,9 +12,6 @@ certainly removing a battle-tested gotcha-fix.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
-
 # Reuse the FakeBrowser from test_walker_with_fake_browser.py
 from tests.unit.test_walker_with_fake_browser import FakeBrowser
 
