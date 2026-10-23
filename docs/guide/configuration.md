@@ -13,7 +13,7 @@ aitester-bdd is configured through environment variables, CLI flags, and in-suit
 | `AITESTER_DISABLE_ASPECTS` | (unset) | Comma-separated: `trajectory,instrument,diagnose,step_delay` |
 | `AITESTER_EMIT_DIR` | RF `${OUTPUT_DIR}` or cwd | Where to write emit.jsonl and walk_log.jsonl |
 | `AITESTER_RUN_SESSION` | auto-generated UUID | Override the browser session ID |
-| `AITESTER_LLM_MODEL` | `cc/claude-opus-4-7` | Model for semantic checks and diagnosis |
+| `AITESTER_LLM_MODEL` | (none; required for LLM steps) | Model for semantic checks, diagnosis, authoring and fluid steps |
 | `AITESTER_AI_DIAGNOSIS` | `on` | Set to `off` to skip LLM diagnosis on failure |
 | `AITESTER_WALK_LOG_MAX` | `2000` | Max entries in the in-memory walk log ring |
 | `OPENAI_BASE_URL` | `http://localhost:20128/v1` | LLM endpoint |

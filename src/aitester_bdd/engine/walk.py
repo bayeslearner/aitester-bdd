@@ -95,6 +95,24 @@ def _topo_sort(rules_by_name: dict[str, Rule]) -> list[str]:
 # Guards call this with a short timeout; observations call with a long one.
 # ---------------------------------------------------------------------------
 
+# State-check kinds that read one element's text, state, class, attribute or
+# value. `visible` is absent: a missing element already reads not visible.
+_NEEDS_ELEMENT = frozenset({
+    "has_text", "contains", "not_contains", "matches",
+    "enabled", "disabled", "checked",
+    "has_class", "not_class", "attr_eq", "attr_contains",
+    "input_value", "select_selected",
+})
+
+
+def _element_present(browser: BrowserAdapter, css: str, timeout_ms: int) -> bool:
+    if browser.get_count(css) > 0:
+        return True
+    if timeout_ms >= 500:
+        return bool(browser.wait_for_elements_state(css, "attached", timeout_ms=timeout_ms))
+    return False
+
+
 def _eval_state_check(
     browser: BrowserAdapter, sc: StateCheck, *, timeout_ms: int, scope: str = "",
 ) -> tuple[bool, str, str]:
@@ -113,6 +131,19 @@ def _eval_state_check(
     # Resolve pipe-fallback selector once for selector-bearing kinds, with
     # the inherited scope (if any) applied per-candidate.
     css_resolved = browser.resolve_fallback_selector(css, scope) if css else css
+
+    # Fail closed (spec 04 R7, review finding 3): the backends' getters return
+    # "" / False / 0 for a selector that matches nothing, which made negative
+    # checks (not_contains, disabled, not_class, …) pass on a mistyped
+    # selector. These kinds read one element, so require that it exists,
+    # waiting up to the check's timeout for it to attach.
+    if kind in _NEEDS_ELEMENT and css_resolved:
+        if not _element_present(browser, css_resolved, timeout_ms):
+            return (False, f"{kind} {expected!r}".strip(), f"no element matched {css_resolved!r}")
+    if kind == "hidden" and css_resolved and not browser.get_count(css_resolved):
+        # An absent element is hidden (Playwright's semantics); say so instead
+        # of reporting it as an observed state.
+        return (True, "hidden", f"no element matched {css_resolved!r} (absent counts as hidden)")
 
     # ── URL ────────────────────────────────────────────────────────────
     if kind == "url_contains":
@@ -341,9 +372,8 @@ def _eval_state_check(
 # ---------------------------------------------------------------------------
 # Semantic / visual_semantic — sparingly used, opt-in by env config.
 #
-# AITESTER_LLM_MODEL defaults to the claude-code-proxy
-# ("openai/cc/claude-opus-4-7" against OPENAI_BASE_URL=
-# http://localhost:20128/v1). Override to swap providers.
+# AITESTER_LLM_MODEL (and _BASE_URL / _API_KEY for a gateway) must be set;
+# there is no shipped default model or endpoint.
 # ---------------------------------------------------------------------------
 
 
@@ -354,8 +384,8 @@ _LLM_CACHE: object = _UNSET
 def _get_llm():
     """Lazy-load the LLM adapter.
 
-    Default config points at the claude-code-proxy on localhost; override
-    via AITESTER_LLM_MODEL / OPENAI_BASE_URL. Init failures are reported
+    Configured by AITESTER_LLM_MODEL / _BASE_URL / _API_KEY (no shipped
+    default). Init failures are reported
     in the StateCheck observation, not silently swallowed."""
     global _LLM_CACHE
     if _LLM_CACHE is not _UNSET:
@@ -594,7 +624,13 @@ def _await_after_action(browser: BrowserAdapter, action: Action) -> None:
     sel = action.options.get("await")
     if sel:
         resolved = browser.resolve_fallback_selector(sel)
-        browser.wait_for_elements_state(resolved, "attached", timeout_ms=DEFAULT_OBSERVATION_TIMEOUT_MS)
+        # Backends return False on timeout rather than raise; a missed
+        # observation fails the step (spec 04 R7, review finding 1).
+        if not browser.wait_for_elements_state(resolved, "attached", timeout_ms=DEFAULT_OBSERVATION_TIMEOUT_MS):
+            raise TimeoutError(
+                f"await={sel!r}: no matching element appeared within "
+                f"{DEFAULT_OBSERVATION_TIMEOUT_MS} ms"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -863,6 +899,13 @@ def _execute_body(
 # Per-rule walk
 # ---------------------------------------------------------------------------
 
+def _explore_debug() -> bool:
+    """Full agent stream for fluid steps only when asked (AITESTER_EXPLORE_DEBUG);
+    it echoes the story, which may hold resolved variables (review finding 7d).
+    The one-line progress stream is always on."""
+    return os.environ.get("AITESTER_EXPLORE_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _walk_explore_rule(
     browser: BrowserAdapter,
     scenario: Scenario,
@@ -900,7 +943,7 @@ def _walk_explore_rule(
             bug_report_dir=suite_path.parent / "triage",
             mode="explore_and_author",
             pinning=pinning,
-            debug=True,
+            debug=_explore_debug(),
         )
         passed = result.suite_path is not None
         message = f"Authored {result.suite_path}" if passed else (result.final_message or "agent exhausted iterations")
@@ -911,7 +954,7 @@ def _walk_explore_rule(
             story=rule.explore_story,
             base_url=base_url,
             session=session_id,
-            debug=True,
+            debug=_explore_debug(),
         )
         passed = result.passed
         message = result.notes if passed else result.bug_report
@@ -919,7 +962,9 @@ def _walk_explore_rule(
     emit_notes = opts.get("notes", "true").lower() != "false"
     if passed and emit_notes and message:
         from robot.api import logger
-        logger.info(f"[explore] PASS — {message}", html=True)
+        # Plain text: the notes quote page content, which must not inject
+        # HTML into log.html (spec 04, review finding 7d).
+        logger.info(f"[explore] PASS — {message}")
 
     return RuleResult(
         rule_name=rule.name,
@@ -1695,14 +1740,35 @@ def _assert_real_browser(browser: BrowserAdapter) -> None:
         return
     try:
         ok, reason = preflight()
-    except Exception as exc:  # never let preflight itself mask a real driver
-        log.debug("browser preflight raised, treating as OK: %s", exc)
-        return
+    except Exception as exc:
+        # A preflight that cannot run proves nothing about the browser; the
+        # INV-4 guard fails closed (spec 04 R7, review finding 9).
+        raise NullBrowserError(
+            f"aitester-bdd: browser preflight raised {type(exc).__name__}: {exc}"
+        ) from exc
     if not ok:
         raise NullBrowserError(
             "aitester-bdd: browser preflight FAILED — refusing to run so a "
             "stub browser cannot report a silent PASS (INV-4).\n  " + reason
         )
+
+
+def _type_and_confirm(browser: BrowserAdapter, css: str, value: str, *, secret: bool) -> None:
+    """Type into a setup field and read it back. A single-page app that
+    hydrates after the field is attached resets what was typed before; retype
+    once after a pause, then fail rather than submit an empty form. The value
+    is compared, never logged."""
+    for attempt in (1, 2):
+        browser.type(css, value, secret=secret)
+        if not value or browser.get_value(css) == value:
+            return
+        if attempt == 1:
+            time.sleep(1.0)
+    raise RuntimeError(f"{css!r} did not keep the typed value (page still loading?)")
+
+
+class StateSetupError(RuntimeError):
+    """A suite-level setup step (sign-in, consent) failed."""
 
 
 def _run_state_setup(browser: BrowserAdapter, verification: Verification) -> None:
@@ -1715,9 +1781,11 @@ def _run_state_setup(browser: BrowserAdapter, verification: Verification) -> Non
       - action=input css=... value=...  → fill text
       - action=password css=... value=...  → fill text (treated as secret)
       - action=click css=...     → click
+      - action=wait css=...      → wait for an element (e.g. a signed-in marker)
 
-    All errors are logged + skipped so a misconfigured setup doesn't
-    block the test run with a cryptic adapter error.
+    A failed or unknown setup step raises StateSetupError naming the step:
+    every scenario after it would run signed out (spec 04 R7, review
+    finding 9). Values are never put in the message.
     """
     ss = verification.state_setup
     if not ss.actions:
@@ -1732,18 +1800,28 @@ def _run_state_setup(browser: BrowserAdapter, verification: Verification) -> Non
     for sa in ss.actions:
         action = sa.get("action", "")
         try:
+            css = sa.get("css", "")
+            # A single-page app renders its form after `open` returns: wait for
+            # the step's element before acting on it.
+            if css and action in ("input", "password", "click", "wait") and not browser.wait_for_elements_state(
+                css, "attached", timeout_ms=DEFAULT_OBSERVATION_TIMEOUT_MS,
+            ):
+                raise LookupError(f"no element matched {css!r} within {DEFAULT_OBSERVATION_TIMEOUT_MS} ms")
             if action == "open":
                 browser.open(sa.get("url", ""))
-            elif action == "input":
-                browser.type(sa.get("css", ""), sa.get("value", ""), secret=False)
-            elif action == "password":
-                browser.type(sa.get("css", ""), sa.get("value", ""), secret=True)
+            elif action in ("input", "password"):
+                _type_and_confirm(browser, css, sa.get("value", ""), secret=action == "password")
             elif action == "click":
-                browser.click(sa.get("css", ""))
+                browser.click(css)
+            elif action == "wait":
+                pass  # the attach wait above is the whole step: e.g. a signed-in marker
             else:
-                log.warning("state_setup: unknown action %r", action)
+                raise ValueError(f"unknown action {action!r}")
         except Exception as exc:
-            log.warning("state_setup %s failed: %s", action, exc)
+            raise StateSetupError(
+                f"state setup step {action!r} on {sa.get('css') or sa.get('url') or ''!r} "
+                f"failed: {type(exc).__name__}: {exc}"
+            ) from exc
     browser.wait_for_load_state("networkidle", timeout="10s")
 
 

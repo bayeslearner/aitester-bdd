@@ -25,13 +25,16 @@ dependencies = [
     # authoring agent emits.
     "robotframework>=7.0",
     # Authoring-time agent loop. DeepAgents wraps LangGraph and provides
-    # TodoList + Filesystem + Shell tools out of the box. The agent shells
-    # out to the `agent-browser` CLI for the live browser work — no Python
-    # Playwright dependency in the base install.
-    "deepagents>=0.0.15",
-    "langgraph>=0.2.50",
-    "langchain>=0.3",
-    "langchain-openai>=0.2",
+    # Filesystem + Shell tools out of the box. The agent shells out to the
+    # `agent-browser` CLI for the live browser work — no Python Playwright
+    # dependency in the base install. Bounded to the series the code is
+    # tested on (spec 04 R1): deepagents 0.7 changed its default middleware.
+    "deepagents>=0.7.31,<0.8",
+    "langgraph>=1.2,<2",
+    "langchain>=1.3,<2",
+    "langchain-openai>=1.1,<2",
+    # The `api_returns` state check (engine/walk.py).
+    "httpx>=0.27",
     # In-walker semantic / visual_semantic escape hatch (one-shot LLM call,
     # no tools at run time) — litellm is the simple multi-provider client.
     "litellm>=1.50",
@@ -41,6 +44,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# External authoring agents over ACP (Agent Client Protocol): aitester runs
+# as the ACP client and hands the agent one MCP server with the browser
+# commands and the terminal tools (spec 04 R5).
+#   pip install aitester-bdd[acp]
+#   aitester author --agent "acp:npx -y @agentclientprotocol/claude-agent-acp" …
+acp = [
+    "agent-client-protocol>=0.12.1,<0.13",
+    "mcp>=2.3,<3",
+]
 # Playwright runtime backend (in-process). Pick this when subprocess latency
 # matters for action-heavy suites. Install + run once:
 #   pip install aitester-bdd[playwright]

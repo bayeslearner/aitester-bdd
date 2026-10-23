@@ -434,12 +434,14 @@ class _PlaywrightBackend:
 
     def type(self, selector: str, value: str, *, secret: bool = False) -> None:
         b = self._rf_browser()
-        if secret and hasattr(b, "type_secret"):
-            try:
-                b.type_secret(selector, value)
-                return
-            except Exception:
-                pass
+        if secret:
+            # No fallback to fill_text: robotframework-browser logs Fill Text's
+            # value at INFO (spec 04, review finding 7b). A failure here fails
+            # the step with the value kept out of the log.
+            if not hasattr(b, "type_secret"):
+                raise RuntimeError("this Browser library has no Type Secret; refusing to type a secret in plain text")
+            b.type_secret(selector, value)
+            return
         if hasattr(b, "fill_text"):
             b.fill_text(selector, value)
         elif hasattr(b, "type_text"):

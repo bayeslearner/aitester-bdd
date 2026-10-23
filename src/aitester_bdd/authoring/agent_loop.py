@@ -7,23 +7,24 @@ checkpointing are battle-tested.
 Flow:
   - System prompt = SKILL.md verbatim (so the agent follows the same
     instructions a human-driving Claude Code agent would follow).
-  - User prompt = story + base_url + paths for the two terminal outputs.
-  - Tools = agent-browser bridges + read_file + write_robot_suite +
-    report_bug. The terminal tools (write_robot_suite / report_bug)
-    return an "AUTHORING_DONE: ..." marker which the caller scans for
-    after the run completes.
-  - LLM = langchain_openai.ChatOpenAI configured for the local
-    claude-code-proxy by default (model "cc/claude-opus-4-7", base_url
-    "http://localhost:20128/v1"); override via env.
+  - User prompt = story + base_url.
+  - Tools = the backend's `execute` (agent-browser CLI) + the terminal
+    tools (write_robot_suite / report_bug, or journey_complete /
+    journey_blocked). Their outcome lands in a `TerminalState` the caller
+    owns; the transcript is never parsed for it.
+  - LLM = any LangChain chat model via `init_chat_model`, configured by
+    AITESTER_LLM_MODEL / _BASE_URL / _API_KEY, with a per-call timeout and
+    a small retry budget.
 
 The agent decides what to call when and in what order. We don't direct
 the exploration step-by-step — that's the whole point.
 """
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
+import sys
+import time
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -44,7 +45,7 @@ CRITICAL RULES:
 2. Do NOT call journey_complete after just the first few steps. If you've only logged in and navigated but the story asks you to also interact with a case — YOU ARE NOT DONE.
 3. Use agent-browser CLI commands via the execute tool. Chain commands with && for efficiency.
 4. After each action, verify it worked (snapshot, check URL, check element state).
-5. If a step fails after reasonable retries (2-3 attempts), call journey_blocked with details.
+5. If a step fails after reasonable retries (2-3 attempts), call journey_blocked with details. A typed URL that redirects is not a failure by itself: reach the page through the app's own navigation (sidebar, menus, mode toggles such as an 'AI' / 'Studio' switch) before giving up.
 6. Only call journey_complete when EVERY action and EVERY verification in the story has been performed. Re-read the story before calling journey_complete to make sure you haven't skipped anything.
 7. Your journey_complete notes must describe each step you took and what you observed — these notes are the test evidence.
 
@@ -69,13 +70,12 @@ a guessed selector with a content getter.
 
 # ─── Planning (spec 01-explore-author-planning) ──────────────────────
 #
-# Prompt-only planning (Option A). The deepagents default middleware stack
-# already includes langchain's TodoListMiddleware, which registers the
-# `write_todos` tool and persists its state under graph key "todos"
-# (readable post-run as result["todos"]). We only add domain-specific
-# guidance to our prompts and read the resulting plan back out. Everything
-# is gated behind _planning_enabled() so the disabled path is byte-identical
-# to the pre-spec prompts.
+# Prompt-only planning (Option A). deepagents 0.7 no longer puts langchain's
+# TodoListMiddleware in its default stack, so planning adds it explicitly
+# (`_planning_middleware`). It registers the `write_todos` tool and persists
+# its state under graph key "todos" (readable post-run as result["todos"]).
+# Everything is gated behind _planning_enabled(), so the disabled path has no
+# write_todos tool and no todo prompt.
 
 
 # Appended to the explore prompts when AITESTER_SHOT_EVERY_STEP is set, so a
@@ -123,28 +123,71 @@ def _planning_enabled() -> bool:
     return val in ("true", "1", "on", "yes")
 
 
-@contextlib.contextmanager
-def _maybe_disable_todo_middleware():
-    """When planning is disabled, swap deepagents' always-on TodoListMiddleware
-    for a no-op so the OFF state is *truly* planning-free — no write_todos tool
-    and no todo prompt. Fixes spec-01 D4, which previously only dropped our own
-    prompt block while the middleware kept planning active (confounded the A/B).
-    """
-    if _planning_enabled():
-        yield
-        return
-    import deepagents.graph as _g
-    from langchain.agents.middleware.types import AgentMiddleware as _AgentMiddleware
+def _planning_middleware() -> list:
+    """Middleware to pass to `create_deep_agent`: TodoListMiddleware when
+    planning is on, nothing when it is off (spec-01 D4: the OFF state has no
+    write_todos tool and no todo prompt)."""
+    if not _planning_enabled():
+        return []
+    from langchain.agents.middleware import TodoListMiddleware
 
-    class _NoTodo(_AgentMiddleware):  # no tools, no wrap_model_call → injects nothing
-        pass
+    return [TodoListMiddleware()]
 
-    _orig = _g.TodoListMiddleware
-    _g.TodoListMiddleware = _NoTodo
-    try:
-        yield
-    finally:
-        _g.TodoListMiddleware = _orig
+
+# Variables the agent's shell may see (review finding 11). The agent is steered
+# by page content, so it must not hold API keys or test secrets; anything else
+# it needs is named in AITESTER_AGENT_ENV (comma-separated).
+_AGENT_ENV_ALLOW = (
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "TERM", "TZ",
+)
+_AGENT_ENV_PREFIXES = ("LC_", "AGENT_BROWSER_")
+
+
+def _agent_env(browser_session: str) -> dict[str, str]:
+    extra = {v.strip() for v in os.environ.get("AITESTER_AGENT_ENV", "").split(",") if v.strip()}
+    env = {
+        k: v for k, v in os.environ.items()
+        if k in _AGENT_ENV_ALLOW or k in extra or k.startswith(_AGENT_ENV_PREFIXES)
+    }
+    env["AGENT_BROWSER_SESSION"] = browser_session
+    return env
+
+
+# The agent-browser commands both CLI prompts teach. One copy (review finding 13).
+_AGENT_BROWSER_CHEATSHEET = (
+    "## agent-browser cheatsheet (inline — do NOT run --help)\n\n"
+    "```\n"
+    "agent-browser open <url> --json\n"
+    "agent-browser snapshot -c -i --json   # compact, interactive elements only, with @refs\n"
+    "agent-browser get count '<css>' --json\n"
+    "agent-browser get text '<css>' --json\n"
+    "agent-browser get html '<css>' --json     # CSS only — NOT @refs\n"
+    "agent-browser get attr '@e3'|'<css>' '<name>' --json\n"
+    "agent-browser click '<css|@ref>' --json\n"
+    "agent-browser fill '<css>' '<text>' --json     # clear+fill, native React events\n"
+    "agent-browser type '<css>' '<text>' --json     # append+type\n"
+    "agent-browser press '<key>' --json    # Enter, Tab, Escape, Control+a, ArrowDown\n"
+    "agent-browser wait '<css>'|<ms> --json\n"
+    "agent-browser eval '<js>' --json   # arrow fn or expression; e.g. '() => document.title' or '1+1'\n"
+    "agent-browser find <locator> <value> <action> [text] --json\n"
+    "  locators: role | text | label | placeholder | alt | title | testid | first | last | nth\n"
+    "  actions:  click | fill | check | hover\n"
+    "  examples: find placeholder 'Username' fill admin\n"
+    "            find role button click --name 'Sign in'\n"
+    "            find testid login-form click\n"
+    "```\n\n"
+    "Chain commands with `&&` in one execute call — way fewer LLM round-trips.\n\n"
+)
+
+# Spec 04 R4: in a single-page app a typed URL often redirects (mode toggles,
+# role-gated layouts). That is not a bug until the app's own navigation fails.
+_NAVIGATION_RULE = (
+    "  - Reach pages the way a user does. If opening a URL directly redirects "
+    "or a page seems missing, look for the app's own navigation first: sidebar "
+    "links, menus, tabs, mode toggles (for example an 'AI' / 'Studio' switch), "
+    "breadcrumbs. Only when that also fails is the page unreachable, and the "
+    "report must list each UI path you tried.\n"
+)
 
 
 # Appended (when enabled) to BOTH explore prompts. Self-enforces "did I do all
@@ -251,10 +294,9 @@ def _explore_system_prompt() -> str:
 class AuthoringResult:
     """What the agent loop produced.
 
-    Exactly one of `suite_path` / `bug_report_path` is set on success
-    (corresponding to the terminal tool the agent called). If both are
-    None, the agent exhausted iterations without calling a terminal
-    tool — treat as a soft failure.
+    At most one of `suite_path` / `bug_report_path` is set: the first
+    terminal tool the agent called (TerminalState). If both are None, the
+    agent exhausted iterations without calling a terminal tool.
     """
 
     suite_path: Path | None = None
@@ -262,6 +304,7 @@ class AuthoringResult:
     iterations: int = 0
     final_message: str = ""
     transcript: list[dict] = None  # full message list for debugging
+    elapsed_s: float = 0.0
 
     @property
     def ok(self) -> bool:
@@ -364,12 +407,14 @@ def _build_llm(
         kwargs["base_url"] = b
     if k:
         kwargs["api_key"] = k
-    # timeout/max_retries are OpenAI-constructor kwargs; pass them only on the
-    # (default, tested) openai path so we don't feed a kwarg another provider's
-    # constructor would reject. max_retries=8 rides out transient 5xx/overloads.
-    if provider == "openai":
-        kwargs["timeout"] = 120.0
-        kwargs["max_retries"] = int(os.environ.get("AITESTER_LLM_MAX_RETRIES", "8"))
+    # Spec 04 R2: bound every call. The openai, anthropic and google_genai
+    # constructors all take `timeout` and `max_retries`; other providers keep
+    # their SDK defaults rather than receive a kwarg they may reject.
+    if provider in ("openai", "anthropic", "google_genai"):
+        timeout_s, retries = llm_call_budget()
+        kwargs["timeout"] = timeout_s
+        kwargs["max_retries"] = retries
+    _surface_client_retries()
 
     try:
         return init_chat_model(**kwargs)
@@ -380,24 +425,37 @@ def _build_llm(
         ) from exc
 
 
-def _parse_terminal_markers(transcript: list[dict]) -> tuple[Path | None, Path | None]:
-    """Scan tool messages for "AUTHORING_DONE: suite=..." / "...bug_report=...".
+def llm_call_budget() -> tuple[float, int]:
+    """(per-call timeout in seconds, retries) from AITESTER_LLM_TIMEOUT and
+    AITESTER_LLM_MAX_RETRIES; defaults 60 s and 3 (spec 04 R2)."""
+    timeout_s = float(os.environ.get("AITESTER_LLM_TIMEOUT", "60"))
+    retries = int(os.environ.get("AITESTER_LLM_MAX_RETRIES", "3"))
+    if timeout_s <= 0 or retries < 0:
+        raise ValueError(
+            f"AITESTER_LLM_TIMEOUT must be > 0 and AITESTER_LLM_MAX_RETRIES >= 0; "
+            f"got {timeout_s} and {retries}"
+        )
+    return timeout_s, retries
 
-    The terminal tools (write_robot_suite, report_bug) embed these
-    markers in their string return values. We trust whichever fires
-    last in the transcript.
+
+def _surface_client_retries() -> None:
+    """Print the model SDKs' own retry lines to stderr (spec 04 R3).
+
+    The openai and anthropic clients log "Retrying request to … in N seconds"
+    at INFO on their base-client loggers; without a handler a stuck call is
+    silent. Idempotent.
     """
-    suite_path: Path | None = None
-    bug_path: Path | None = None
-    for msg in transcript:
-        content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
-        if not isinstance(content, str):
+    handler_name = "aitester-retries"
+    for name in ("openai._base_client", "anthropic._base_client"):
+        lg = logging.getLogger(name)
+        if any(h.get_name() == handler_name for h in lg.handlers):
             continue
-        if "AUTHORING_DONE: suite=" in content:
-            suite_path = Path(content.split("AUTHORING_DONE: suite=", 1)[1].splitlines()[0].strip())
-        if "AUTHORING_DONE: bug_report=" in content:
-            bug_path = Path(content.split("AUTHORING_DONE: bug_report=", 1)[1].splitlines()[0].strip())
-    return suite_path, bug_path
+        h = logging.StreamHandler(sys.stderr)
+        h.set_name(handler_name)
+        h.setLevel(logging.INFO)
+        h.setFormatter(logging.Formatter("[author] model call: %(message)s"))
+        lg.addHandler(h)
+        lg.setLevel(logging.INFO)
 
 
 # ─── The loop ────────────────────────────────────────────────────────
@@ -435,9 +493,7 @@ def author_with_agent(
                 f"as your selectors are grounded; do not re-validate alternatives "
                 f"or re-explore on a fresh page load."
             )
-        if debug:
-            import sys
-            print(f"[author/attempt {attempt}/{max_attempts}]", file=sys.stderr)
+        print(f"[author] attempt {attempt}/{max_attempts}", file=sys.stderr, flush=True)
         result = _author_once(
             story=story + suffix,
             base_url=base_url,
@@ -492,10 +548,17 @@ def _author_once(
     from deepagents.backends import LocalShellBackend
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from aitester_bdd.authoring.tools import build_tools, session_id
+    from aitester_bdd.authoring.tools import TerminalState, build_tools, session_id, stop_when_done
 
+    started = time.monotonic()
     llm = _build_llm(model=llm_model, base_url=llm_base_url, api_key=llm_api_key)
-    tools = build_tools(source_root=source_root)
+
+    # Slug for the bug-report filename in case the agent reaches for one.
+    slug = _slugify(story)[:60] or "untitled"
+    bug_report_path = bug_report_dir / f"{slug}.md"
+
+    state = TerminalState()
+    tools = build_tools(state, suite_path=suite_path, bug_report_path=bug_report_path)
     system_prompt = build_system_prompt(mode, pinning=pinning)
 
     # When inside RF with Playwright, add Playwright browser tools so the
@@ -505,85 +568,54 @@ def _author_once(
         from aitester_bdd.authoring.playwright_tools import build_playwright_browser_tools
         tools = tools + build_playwright_browser_tools()
 
-    backend_env = dict(os.environ)
-    backend_env["AGENT_BROWSER_SESSION"] = session_id()
-
     backend = LocalShellBackend(
         root_dir=str(source_root) if source_root else None,
-        env=backend_env,
-        inherit_env=True,
+        env=_agent_env(session_id()),
+        inherit_env=False,
         timeout=120,
         max_output_bytes=200_000,
     )
 
-    with _maybe_disable_todo_middleware():
-        agent = create_deep_agent(
-            model=llm,
-            tools=tools,
-            system_prompt=system_prompt,
-            backend=backend,
-            checkpointer=InMemorySaver(),
-        )
-
-    # Slug for the bug-report filename in case the agent reaches for one.
-    slug = _slugify(story)[:60] or "untitled"
-    bug_report_path = bug_report_dir / f"{slug}.md"
+    agent = create_deep_agent(
+        model=llm,
+        tools=tools,
+        system_prompt=system_prompt,
+        middleware=[*_planning_middleware(), stop_when_done(state)],
+        backend=backend,
+        checkpointer=InMemorySaver(),
+    )
 
     user_message = (
         f"Story: {story}\n\n"
         f"Base URL: {base_url}\n\n"
         f"You are authoring an aitester-bdd .robot test suite for this story.\n\n"
-        f"## agent-browser cheatsheet (inline — do NOT run --help)\n\n"
-        f"```\n"
-        f"agent-browser open <url> --json\n"
-        f"agent-browser snapshot -c -i --json   # compact, interactive elements only, with @refs\n"
-        f"agent-browser get count '<css>' --json\n"
-        f"agent-browser get text '<css>' --json\n"
-        f"agent-browser get html '<css>' --json     # CSS only — NOT @refs\n"
-        f"agent-browser get attr '@e3'|'<css>' '<name>' --json\n"
-        f"agent-browser click '<css|@ref>' --json\n"
-        f"agent-browser fill '<css>' '<text>' --json     # clear+fill, native React events\n"
-        f"agent-browser type '<css>' '<text>' --json     # append+type\n"
-        f"agent-browser press '<key>' --json    # Enter, Tab, Escape, Control+a, ArrowDown\n"
-        f"agent-browser wait '<css>'|<ms> --json\n"
-        f"agent-browser eval '<js>' --json   # arrow fn or expression; e.g. '() => document.title' or '1+1'\n"
-        f"agent-browser find <locator> <value> <action> [text] --json\n"
-        f"  locators: role | text | label | placeholder | alt | title | testid | first | last | nth\n"
-        f"  actions:  click | fill | check | hover\n"
-        f"  examples: find placeholder 'Username' fill admin\n"
-        f"            find role button click --name 'Sign in'\n"
-        f"            find testid login-form click\n"
-        f"```\n\n"
-        f"Chain commands with `&&` in one execute call — way fewer LLM round-trips.\n\n"
-        f"## Rules\n\n"
-        f"  - Every selector in the .robot must come from a real attribute observed on the live page — never invent.\n"
-        f"  - Snapshot `name='X'` is the ACCESSIBLE LABEL, not the HTML `name=` attribute. Use `get attr` to read the real HTML attribute.\n"
-        f"  - **Stop exploring as soon as every selector is grounded.** Do not re-verify, do not re-snapshot, do not re-explore on a fresh page load — write the suite and exit.\n"
+        + _AGENT_BROWSER_CHEATSHEET
+        + "## Rules\n\n"
+        "  - Every selector in the .robot must come from a real attribute observed on the live page — never invent.\n"
+        "  - Snapshot `name='X'` is the ACCESSIBLE LABEL, not the HTML `name=` attribute. Use `get attr` to read the real HTML attribute.\n"
+        "  - **Stop exploring as soon as every selector is grounded.** Do not re-verify, do not re-snapshot, do not re-explore on a fresh page load — write the suite and exit.\n"
         f"  - Declare ${{ENGINE}}    {engine} in the *** Variables *** section so `aitester run` picks the matching runtime.\n"
-        f"  - If the system is broken in a way that prevents authoring, file a bug report instead.\n\n"
-        f"When ready:\n"
-        f"  - For a .robot suite, call write_robot_suite with path={suite_path}\n"
-        f"  - For a bug report, call report_bug with path={bug_report_path}\n\n"
-        f"Begin."
+        + _NAVIGATION_RULE
+        + "  - If the app is broken in a way that prevents authoring, file a bug report instead.\n\n"
+        "When ready, call write_robot_suite with the suite body, or report_bug with the report. "
+        "Either call ends the run.\n\n"
+        "Begin."
     )
 
     thread_id = f"author-{slug}"
     config = {"configurable": {"thread_id": thread_id}, "recursion_limit": max_iters * 4}
 
     try:
-        if debug:
-            result = _invoke_with_debug_stream(agent, user_message, config)
-        else:
-            result = agent.invoke(
-                {"messages": [{"role": "user", "content": user_message}]},
-                config=config,
-            )
+        result = _invoke_streaming(agent, user_message, config, debug=debug, label="author")
     except Exception as exc:
         log.exception("agent loop failed")
         return AuthoringResult(
+            suite_path=state.path if state.kind == "suite" else None,
+            bug_report_path=state.path if state.kind == "bug" else None,
             iterations=0,
             final_message=f"agent loop crashed: {type(exc).__name__}: {exc}",
             transcript=[],
+            elapsed_s=time.monotonic() - started,
         )
 
     messages = result.get("messages", []) if isinstance(result, dict) else []
@@ -596,7 +628,6 @@ def _author_once(
         for m in messages
     ]
 
-    found_suite, found_bug = _parse_terminal_markers(transcript)
     last = messages[-1] if messages else None
     final_message = str(getattr(last, "content", "")) if last is not None else ""
 
@@ -606,20 +637,21 @@ def _author_once(
     plan_summary = _summarize_todos(result)
     if plan_summary:
         _rf_log(plan_summary)
-        if found_bug is not None:
+        if state.kind == "bug":
             try:
-                with open(found_bug, "a", encoding="utf-8") as fh:
+                with open(state.path, "a", encoding="utf-8") as fh:
                     fh.write(f"\n\n## Planning trace\n\n{plan_summary}\n")
             except OSError:
-                log.warning("could not append plan to bug report %s", found_bug)
+                log.warning("could not append plan to bug report %s", state.path)
         final_message = f"{final_message}\n\n{plan_summary}" if final_message else plan_summary
 
     return AuthoringResult(
-        suite_path=found_suite,
-        bug_report_path=found_bug,
+        suite_path=state.path if state.kind == "suite" else None,
+        bug_report_path=state.path if state.kind == "bug" else None,
         iterations=len(messages),
         final_message=final_message,
         transcript=transcript,
+        elapsed_s=time.monotonic() - started,
     )
 
 
@@ -675,17 +707,13 @@ def explore_with_agent(
     from deepagents import create_deep_agent
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from aitester_bdd.authoring.tools import (
-        _reset_explore_state,
-        build_explore_tools,
-        get_explore_result,
-    )
+    from aitester_bdd.authoring.tools import TerminalState, build_explore_tools, stop_when_done
 
-    _reset_explore_state()
+    state = TerminalState()
     llm = _build_llm(model=llm_model, base_url=llm_base_url, api_key=llm_api_key)
 
     # Terminal tools (journey_complete, journey_blocked) — always needed
-    terminal_tools = build_explore_tools()
+    terminal_tools = build_explore_tools(state)
 
     if _is_inside_rf():
         # Playwright path: typed tools wrapping the shared RF Browser
@@ -695,7 +723,6 @@ def explore_with_agent(
         )
         browser_tools = build_playwright_browser_tools()
         tools = terminal_tools + browser_tools
-        # Disabled path returns the untouched constant (byte-identical).
         system_prompt = PLAYWRIGHT_EXPLORE_PROMPT + (
             _EXPLORE_PLANNING_BLOCK if _planning_enabled() else ""
         ) + (_EXPLORE_SHOT_BLOCK_RF if _shot_every_step_enabled() else "")
@@ -710,13 +737,10 @@ def explore_with_agent(
         system_prompt = _explore_system_prompt() + (
             _EXPLORE_SHOT_BLOCK_CLI if _shot_every_step_enabled() else ""
         )
-        browser_session = session or session_id()
-        backend_env = dict(os.environ)
-        backend_env["AGENT_BROWSER_SESSION"] = browser_session
         backend = LocalShellBackend(
             root_dir=str(source_root) if source_root else None,
-            env=backend_env,
-            inherit_env=True,
+            env=_agent_env(session or session_id()),
+            inherit_env=False,
             timeout=120,
             max_output_bytes=200_000,
         )
@@ -725,63 +749,46 @@ def explore_with_agent(
         "model": llm,
         "tools": tools,
         "system_prompt": system_prompt,
+        "middleware": [*_planning_middleware(), stop_when_done(state)],
         "checkpointer": InMemorySaver(),
     }
     if backend is not None:
         agent_kwargs["backend"] = backend
 
-    with _maybe_disable_todo_middleware():
-        agent = create_deep_agent(**agent_kwargs)
+    agent = create_deep_agent(**agent_kwargs)
 
     import re
     numbered = re.findall(r'\d+\)', story)
     step_count = len(numbered) if numbered else len([s for s in story.split('.') if s.strip()])
 
+    preamble = (
+        f"Story ({step_count} steps): {story}\n\n"
+        f"Base URL: {base_url}\n\n"
+        f"You are EXPLORING — performing a fluid test of this story against the live app.\n\n"
+        f"This story has {step_count} steps. You MUST perform ALL {step_count} before "
+        f"calling journey_complete. Do NOT stop after login or navigation — "
+        f"continue through every interaction and verification described. "
+        f"Re-read the story before calling journey_complete to confirm you "
+        f"haven't skipped anything.\n\n"
+    )
     if _is_inside_rf():
         user_message = (
-            f"Story ({step_count} steps): {story}\n\n"
-            f"Base URL: {base_url}\n\n"
-            f"You are EXPLORING — performing a fluid test of this story against the live app.\n\n"
-            f"This story has {step_count} steps. You MUST perform ALL {step_count} before "
-            f"calling journey_complete. Do NOT stop after login or navigation — "
-            f"continue through every interaction and verification described. "
-            f"Re-read the story before calling journey_complete to confirm you "
-            f"haven't skipped anything.\n\n"
-            f"Start with browser_snapshot() to see the current page state, then proceed.\n\n"
-            f"Begin."
+            preamble
+            + "Start with browser_snapshot() to see the current page state, then proceed.\n\n"
+            "Begin."
         )
     else:
         user_message = (
-            f"Story ({step_count} steps): {story}\n\n"
-            f"Base URL: {base_url}\n\n"
-            f"You are EXPLORING — performing a fluid test of this story against the live app.\n\n"
-            f"This story has {step_count} steps. You MUST perform ALL {step_count} before "
-            f"calling journey_complete. Do NOT stop after login or navigation — "
-            f"continue through every interaction and verification described. "
-            f"Re-read the story before calling journey_complete to confirm you "
-            f"haven't skipped anything.\n\n"
-            f"## agent-browser cheatsheet (inline — do NOT run --help)\n\n"
-            f"```\n"
-            f"agent-browser open <url> --json\n"
-            f"agent-browser snapshot -c -i --json\n"
-            f"agent-browser get count '<css>' --json\n"
-            f"agent-browser get text '<css>' --json\n"
-            f"agent-browser click '<css|@ref>' --json\n"
-            f"agent-browser fill '<css>' '<text>' --json\n"
-            f"agent-browser type '<css>' '<text>' --json\n"
-            f"agent-browser press '<key>' --json\n"
-            f"agent-browser wait '<css>'|<ms> --json\n"
-            f"agent-browser eval '<js>' --json\n"
-            f"agent-browser find <locator> <value> <action> [text] --json\n"
-            f"```\n\n"
-            f"Chain commands with `&&` in one execute call.\n\n"
-            f"## Rules\n\n"
-            f"  - Complete the journey end-to-end. Do not stop early.\n"
-            f"  - If the system is broken (page won't render, element missing, "
-            f"action fails after retries), call journey_blocked.\n"
-            f"  - If you complete the full journey successfully, call journey_complete "
-            f"with a step-by-step summary of what you did and observed.\n\n"
-            f"Begin."
+            preamble
+            + _AGENT_BROWSER_CHEATSHEET
+            + "## Rules\n\n"
+            "  - Complete the journey end-to-end. Do not stop early.\n"
+            + _NAVIGATION_RULE
+            + "  - If the system is broken (page won't render, element missing, "
+            "action fails after retries), call journey_blocked.\n"
+            "  - If you complete the full journey successfully, call journey_complete "
+            "with a step-by-step summary of what you did and observed.\n\n"
+            "Begin."
         )
 
     slug = _slugify(story)[:60] or "explore"
@@ -789,13 +796,7 @@ def explore_with_agent(
     config = {"configurable": {"thread_id": thread_id}, "recursion_limit": max_iters * 4}
 
     try:
-        if debug:
-            result = _invoke_with_debug_stream(agent, user_message, config)
-        else:
-            result = agent.invoke(
-                {"messages": [{"role": "user", "content": user_message}]},
-                config=config,
-            )
+        result = _invoke_streaming(agent, user_message, config, debug=debug, label="explore")
     except Exception as exc:
         log.exception("explore agent loop failed")
         return ExploreResult(
@@ -806,7 +807,6 @@ def explore_with_agent(
         )
 
     messages = result.get("messages", []) if isinstance(result, dict) else []
-    notes, bug = get_explore_result()
 
     # D3 observability: surface the final write_todos plan to the RF log, and
     # fold it into the bug report on journey_blocked. result["todos"] holds the
@@ -815,36 +815,34 @@ def explore_with_agent(
     if plan_summary:
         _rf_log(plan_summary)
 
-    if notes:
-        if plan_summary:
-            notes = f"{notes}\n\n{plan_summary}"
+    # The first terminal call decides (TerminalState refuses later ones).
+    if state.kind == "complete":
+        notes = f"{state.text}\n\n{plan_summary}" if plan_summary else state.text
         return ExploreResult(
             passed=True,
             notes=notes,
             iterations=len(messages),
             final_message=notes,
         )
-    elif bug:
-        if plan_summary:
-            bug = f"{bug}\n\n{plan_summary}"
+    if state.kind == "blocked":
+        bug = f"{state.text}\n\n{plan_summary}" if plan_summary else state.text
         return ExploreResult(
             passed=False,
             bug_report=bug,
             iterations=len(messages),
             final_message=bug,
         )
-    else:
-        last = messages[-1] if messages else None
-        final_message = str(getattr(last, "content", "")) if last is not None else ""
-        return ExploreResult(
-            passed=False,
-            bug_report=f"Agent exhausted {len(messages)} iterations without completing the journey.",
-            iterations=len(messages),
-            final_message=final_message,
-        )
+    last = messages[-1] if messages else None
+    final_message = str(getattr(last, "content", "")) if last is not None else ""
+    return ExploreResult(
+        passed=False,
+        bug_report=f"Agent exhausted {len(messages)} iterations without completing the journey.",
+        iterations=len(messages),
+        final_message=final_message,
+    )
 
 
-# ─── Debug streaming ─────────────────────────────────────────────────
+# ─── Streaming ───────────────────────────────────────────────────────
 
 
 def _short(s, n: int = 120) -> str:
@@ -854,24 +852,20 @@ def _short(s, n: int = 120) -> str:
     return s if len(s) <= n else s[:n] + "…"
 
 
-def _invoke_with_debug_stream(agent, user_message: str, config: dict) -> dict:
-    """Stream the agent loop to stderr — one line per agent turn.
+def _invoke_streaming(agent, user_message: str, config: dict, *, debug: bool, label: str) -> dict:
+    """Run the agent loop, printing progress to stderr as it goes.
 
-    Format:
-      [step N] AI: <preview of model text>
-      [step N]    ↪ tool browser_validate_selector(css='...', scope='', ...)
-      [step N]    ← tool_result (ok=True, count=1, ...)
+    Always (spec 04 R3), one line per tool call:
+      [author] step 7 +41s execute
 
-    Lets the operator watch the explorer:
-      - what the model says it's about to do
-      - which tool it picks + key args
-      - the tool's response (truncated)
+    With debug, the full stream instead:
+      [HH:MM:SS +  41.0s] [author/debug] step N AI: <preview of model text>
+      [HH:MM:SS +  41.0s] [author/debug] step N   ↪ execute(command='…')
+      [HH:MM:SS +  41.0s] [author/debug] step N   ← execute: <result preview>
+
     Result shape matches `agent.invoke` so the caller can keep using
     `result["messages"]`.
     """
-    import sys
-    import time
-
     t0 = time.monotonic()
 
     def _ts() -> str:
@@ -882,11 +876,17 @@ def _invoke_with_debug_stream(agent, user_message: str, config: dict) -> dict:
     def _log(line: str) -> None:
         print(f"[{_ts()}] {line}", file=sys.stderr, flush=True)
 
-    _log("[author/debug] streaming agent loop to stderr")
-    _log("[author/debug] " + "─" * 60)
+    def _brief(line: str) -> None:
+        print(f"[{label}] {line} +{time.monotonic() - t0:.0f}s", file=sys.stderr, flush=True)
+
+    tag = f"[{label}/debug]"
+    if debug:
+        _log(f"{tag} streaming agent loop to stderr")
+        _log(f"{tag} " + "─" * 60)
 
     final_state: dict = {}
-    step = 0
+    step = 0  # every message after the prompt (debug numbering)
+    turns = 0  # model turns (the brief progress line)
     seen_ids: set[str] = set()
 
     for chunk in agent.stream(
@@ -904,33 +904,42 @@ def _invoke_with_debug_stream(agent, user_message: str, config: dict) -> dict:
             seen_ids.add(mid)
             kind = type(m).__name__
             if kind in ("HumanMessage", "SystemMessage"):
-                # User/system prompts — log once, briefly.
-                txt = _short(getattr(m, "content", ""), 200)
-                _log(f"[author/debug] {kind}: {txt}")
+                if debug:
+                    _log(f"{tag} {kind}: {_short(getattr(m, 'content', ''), 200)}")
                 continue
             step += 1
             if kind == "AIMessage":
+                calls = getattr(m, "tool_calls", None) or []
+                turns += 1
+                if not debug:
+                    names = ", ".join(
+                        (tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "?"))
+                        for tc in calls
+                    )
+                    _brief(f"step {turns} {names or 'reply'}")
+                    continue
                 content = getattr(m, "content", "") or ""
                 if content:
-                    _log(f"[author/debug] step {step} AI: {_short(content, 200)}")
-                for tc in (getattr(m, "tool_calls", None) or []):
+                    _log(f"{tag} step {step} AI: {_short(content, 200)}")
+                for tc in calls:
                     name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "?")
                     args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
                     # Show 2-3 most useful args; full args dict can be huge.
                     arg_preview = ", ".join(
                         f"{k}={_short(v, 60)!r}" for k, v in list((args or {}).items())[:3]
                     )
-                    _log(f"[author/debug] step {step}   ↪ {name}({arg_preview})")
-            elif kind == "ToolMessage":
+                    _log(f"{tag} step {step}   ↪ {name}({arg_preview})")
+            elif debug and kind == "ToolMessage":
                 tname = getattr(m, "name", "?")
-                content = _short(getattr(m, "content", ""), 200)
-                _log(f"[author/debug] step {step}   ← {tname}: {content}")
-            else:
-                content = _short(getattr(m, "content", ""), 120)
-                _log(f"[author/debug] step {step} {kind}: {content}")
+                _log(f"{tag} step {step}   ← {tname}: {_short(getattr(m, 'content', ''), 200)}")
+            elif debug:
+                _log(f"{tag} step {step} {kind}: {_short(getattr(m, 'content', ''), 120)}")
 
-    _log("[author/debug] " + "─" * 60)
-    _log(f"[author/debug] loop done in {step} steps")
+    if debug:
+        _log(f"{tag} " + "─" * 60)
+        _log(f"{tag} loop done in {step} steps")
+    else:
+        _brief(f"done in {turns} steps")
     return final_state
 
 

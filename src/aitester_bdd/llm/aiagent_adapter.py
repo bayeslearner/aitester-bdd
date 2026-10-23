@@ -18,9 +18,9 @@ provider's native form.
 
 Config resolves through `llm.config.resolve_llm_config` — neutral,
 aitester-owned names (this product depends on LiteLLM, not on any vendor):
-  AITESTER_LLM_MODEL     — model spec (bare, e.g. "cc/claude-opus-4-7")
-  AITESTER_LLM_BASE_URL  — endpoint URL (proxy default for cc/… models)
-  AITESTER_LLM_API_KEY   — credential (proxy default for cc/… models)
+  AITESTER_LLM_MODEL     — model spec (bare, e.g. "claude-sonnet-5-5"); required
+  AITESTER_LLM_BASE_URL  — endpoint URL (an OpenAI-compatible gateway)
+  AITESTER_LLM_API_KEY   — credential for that gateway
 Legacy OPENAI_BASE_URL / OPENAI_API_KEY are still honored (deprecated).
 Any other model defers creds to LiteLLM's provider-native env.
 """

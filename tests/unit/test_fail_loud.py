@@ -162,13 +162,16 @@ def test_model_prefix_normalization():
     assert ensure_openai_prefix("anthropic/claude-opus-4-7") == "anthropic/claude-opus-4-7"
 
 
-def test_resolve_defaults_to_proxy_for_cc_model(monkeypatch):
-    from aitester_bdd.llm.config import DEFAULT_BASE_URL, resolve_llm_config
+def test_resolve_without_model_fails_loud(monkeypatch):
+    """No shipped default model or endpoint (spec 04, review finding 5)."""
+    from aitester_bdd.llm.config import LLMConfigError, resolve_llm_config
 
     _clear_llm_env(monkeypatch)
-    model, base, key = resolve_llm_config()
-    assert model.startswith("cc/")
-    assert base == DEFAULT_BASE_URL and key  # proxy defaults applied
+    with pytest.raises(LLMConfigError, match="AITESTER_LLM_MODEL"):
+        resolve_llm_config()
+    # a cc/ model gets no private endpoint filled in either
+    model, base, key = resolve_llm_config(model="cc/claude-opus-4-7")
+    assert model == "cc/claude-opus-4-7" and base is None and key is None
 
 
 def test_resolve_defers_creds_for_non_proxy_model(monkeypatch):
@@ -185,6 +188,7 @@ def test_resolve_precedence_explicit_over_neutral_over_legacy(monkeypatch):
     from aitester_bdd.llm.config import resolve_llm_config
 
     _clear_llm_env(monkeypatch)
+    monkeypatch.setenv("AITESTER_LLM_MODEL", "claude-sonnet-5-5")  # no shipped default
     # legacy only
     monkeypatch.setenv("OPENAI_BASE_URL", "http://legacy/v1")
     monkeypatch.setenv("OPENAI_API_KEY", "legacy-key")
@@ -223,12 +227,16 @@ def test_split_provider_maps_litellm_prefix_to_langchain():
 
 
 def test_resolve_chat_model_default_and_native(monkeypatch):
-    from aitester_bdd.llm.config import DEFAULT_BASE_URL, resolve_chat_model
+    from aitester_bdd.llm.config import resolve_chat_model
 
     _clear_llm_env(monkeypatch)
+    monkeypatch.setenv("AITESTER_LLM_MODEL", "claude-sonnet-5-5")
+    monkeypatch.setenv("AITESTER_LLM_BASE_URL", "https://gw.example.com/v1")
+    monkeypatch.setenv("AITESTER_LLM_API_KEY", "k")
     provider, model, base, key = resolve_chat_model()
-    assert provider == "openai" and model.startswith("cc/")
-    assert base == DEFAULT_BASE_URL and key  # proxy creds applied
+    assert provider == "openai" and model == "claude-sonnet-5-5"
+    assert base == "https://gw.example.com/v1" and key == "k"
+    _clear_llm_env(monkeypatch)
 
     # native provider → creds deferred to its own LangChain env
     provider, model, base, key = resolve_chat_model(model="anthropic/claude-opus-4-8")

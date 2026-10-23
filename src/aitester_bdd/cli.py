@@ -43,12 +43,18 @@ def author(
     ),
     max_iters: int = typer.Option(100, "--max-iters", help="Max agent iterations per attempt before bailing."),
     max_attempts: int = typer.Option(2, "--max-attempts", help="Retry the whole authoring loop up to N times on crash / recursion limit."),
-    llm_model: str | None = typer.Option(None, "--llm-model", help="LLM model spec (overrides AITESTER_LLM_MODEL). Bare name, e.g. cc/claude-opus-4-7."),
+    llm_model: str | None = typer.Option(None, "--llm-model", help="LLM model spec (overrides AITESTER_LLM_MODEL). Bare name, e.g. claude-sonnet-5-5 or cc/claude-opus-4-7."),
     llm_base_url: str | None = typer.Option(None, "--llm-base-url", help="LLM endpoint URL (overrides AITESTER_LLM_BASE_URL / OPENAI_BASE_URL)."),
     llm_api_key: str | None = typer.Option(None, "--llm-api-key", help="LLM API key (overrides AITESTER_LLM_API_KEY / OPENAI_API_KEY)."),
     debug: bool = typer.Option(
         False, "--debug", "-d",
         help="Stream each agent step (tool calls + results) to stderr so you can watch the explorer work.",
+    ),
+    agent: str = typer.Option(
+        "deepagents", "--agent",
+        help="Who authors: 'deepagents' (in-process, default) or 'acp:<command>' for an external "
+             "agent over ACP, e.g. 'acp:npx -y @agentclientprotocol/claude-agent-acp'. Needs the "
+             "[acp] extra; the agent's own model settings go in AITESTER_AGENT_ENV.",
     ),
 ) -> None:
     """Run the authoring agent loop.
@@ -58,8 +64,6 @@ def author(
     attributes — no inference. Authored suite declares ${ENGINE} so
     `aitester run` picks the matching runtime backend.
     """
-    from aitester_bdd.authoring.agent_loop import author_with_agent
-
     if engine not in ("agent-browser", "playwright", "nodriver"):
         typer.echo(f"[author] ✗ unknown engine {engine!r}; expected agent-browser | playwright | nodriver")
         raise typer.Exit(code=2)
@@ -75,25 +79,49 @@ def author(
     if src_root:
         typer.echo(f"[author] source_root={src_root}")
 
-    result = author_with_agent(
-        story=story,
-        base_url=base_url,
-        suite_path=suite_path,
-        bug_report_dir=triage_path,
-        source_root=src_root,
-        engine=engine,
-        max_iters=max_iters,
-        max_attempts=max_attempts,
-        debug=debug,
-        llm_model=llm_model,
-        llm_base_url=llm_base_url,
-        llm_api_key=llm_api_key,
-    )
+    if agent.startswith("acp:"):
+        try:
+            from aitester_bdd.authoring.acp_author import author_with_acp
+        except ImportError as exc:
+            typer.echo(f"[author] ✗ --agent acp needs the [acp] extra (pip install aitester-bdd[acp]): {exc}")
+            raise typer.Exit(code=2) from exc
+        typer.echo(f"[author] agent=ACP {agent[4:]!r}")
+        result = author_with_acp(
+            agent_command=agent[4:],
+            story=story,
+            base_url=base_url,
+            suite_path=suite_path,
+            bug_report_dir=triage_path,
+            engine=engine,
+            debug=debug,
+        )
+    elif agent == "deepagents":
+        from aitester_bdd.authoring.agent_loop import author_with_agent
+
+        result = author_with_agent(
+            story=story,
+            base_url=base_url,
+            suite_path=suite_path,
+            bug_report_dir=triage_path,
+            source_root=src_root,
+            engine=engine,
+            max_iters=max_iters,
+            max_attempts=max_attempts,
+            debug=debug,
+            llm_model=llm_model,
+            llm_base_url=llm_base_url,
+            llm_api_key=llm_api_key,
+        )
+    else:
+        typer.echo(f"[author] ✗ unknown --agent {agent!r}; expected deepagents or acp:<command>")
+        raise typer.Exit(code=2)
 
     if result.suite_path:
-        typer.echo(f"[author] ✓ wrote suite: {result.suite_path}")
+        typer.echo(f"[author] ✓ wrote suite: {result.suite_path} ({result.elapsed_s:.0f}s)")
     elif result.bug_report_path:
-        typer.echo(f"[author] ! filed bug report: {result.bug_report_path}")
+        # No suite was written, so this is not a success for a caller or CI.
+        typer.echo(f"[author] ! filed bug report: {result.bug_report_path} ({result.elapsed_s:.0f}s)")
+        raise typer.Exit(code=2)
     else:
         typer.echo(f"[author] ✗ agent did not reach a terminal call in {result.iterations} steps")
         typer.echo(f"  final message: {result.final_message[:300]}")
@@ -429,15 +457,15 @@ def doctor(
     except Exception as e:
         typer.echo(f"  ✗ {e}")
     model = os.environ.get("AITESTER_LLM_MODEL")
-    base = os.environ.get("OPENAI_BASE_URL")
+    base = os.environ.get("AITESTER_LLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
     if model:
         typer.echo(f"  ✓ AITESTER_LLM_MODEL={model}")
     else:
-        typer.echo("  ~ AITESTER_LLM_MODEL not set (default: cc/claude-opus-4-7)")
+        typer.echo("  ✗ AITESTER_LLM_MODEL not set — authoring and fluid steps will refuse to start")
     if base:
-        typer.echo(f"  ✓ OPENAI_BASE_URL={base}")
+        typer.echo(f"  ✓ LLM base URL={base}")
     else:
-        typer.echo("  ~ OPENAI_BASE_URL not set (default: http://localhost:20128/v1)")
+        typer.echo("  ~ AITESTER_LLM_BASE_URL not set (the provider's own endpoint is used)")
 
 
 if __name__ == "__main__":

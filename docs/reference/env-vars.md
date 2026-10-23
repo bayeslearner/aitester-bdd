@@ -30,19 +30,21 @@ Its own config uses **neutral, aitester-owned** names:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AITESTER_LLM_MODEL` | `cc/claude-opus-4-7` | Model spec. Set the **bare** name; aitester normalizes it (strips `openai/` for the langchain explore agent, adds `openai/` for the litellm judge). |
-| `AITESTER_LLM_BASE_URL` | (proxy default for `cc/…`) | LLM endpoint URL. Must be scheme+host (e.g. `http://host:port/v1`); a bare path like `/v1` is rejected up front. |
-| `AITESTER_LLM_API_KEY` | (proxy default for `cc/…`) | LLM credential. A **blank** value is rejected up front. |
+| `AITESTER_LLM_MODEL` | (none; required) | Model spec. Set the **bare** name; aitester normalizes it (strips `openai/` for the langchain explore agent, adds `openai/` for the litellm judge). Authoring and fluid steps refuse to start without it. |
+| `AITESTER_LLM_BASE_URL` | (unset) | LLM endpoint URL for an OpenAI-compatible gateway. Must be scheme+host (e.g. `https://gateway.example.com/v1`); a bare path like `/v1` is rejected up front. |
+| `AITESTER_LLM_API_KEY` | (unset) | Credential for that gateway. A **blank** value is rejected up front. |
 | `AITESTER_AI_DIAGNOSIS` | `on` | `off` to disable LLM diagnosis |
-| `AITESTER_LLM_MAX_RETRIES` | `8` | Explore/author agent retry budget on transient LLM errors |
+| `AITESTER_LLM_TIMEOUT` | `60` | Seconds one explore/author model call may take before it is retried |
+| `AITESTER_LLM_MAX_RETRIES` | `3` | Retries per explore/author model call; each retry prints a `[author] model call:` line |
+| `AITESTER_AGENT_ENV` | (unset) | Comma-separated extra variables the agent's shell may see. By default it gets only `PATH`, `HOME`, locale, `TMPDIR` and `AGENT_BROWSER_*`, never API keys or test secrets |
 
 **Resolution precedence** (per value): explicit arg (`--llm-model` / `--llm-base-url`
 / `--llm-api-key`, or the `llm_*` kwargs on `explore_with_agent` /
 `author_with_agent`) → `AITESTER_LLM_*` → legacy `OPENAI_BASE_URL` /
-`OPENAI_API_KEY` (**deprecated**, still honored) → for the default
-claude-code-proxy model (`cc/…`) the local-proxy defaults, otherwise **left
-unset so the provider resolves creds from its own native env**
-(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …).
+`OPENAI_API_KEY` (**deprecated**, still honored) → otherwise **left unset so
+the provider resolves creds from its own native env** (`OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …). There is no shipped default model
+or endpoint.
 
 **Multi-provider.** Both LLM paths are provider-agnostic. The model spec uses a
 litellm-style `provider/model` prefix; the default `cc/…` (no prefix) is treated

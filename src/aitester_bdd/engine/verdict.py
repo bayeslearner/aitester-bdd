@@ -33,7 +33,9 @@ class Verdict:
 
     @property
     def passed(self) -> bool:
-        return all(r.passed for r in self.results)
+        # Zero rules ran (all filtered out, or none defined): nothing was
+        # verified, so that is not a pass (spec 04 R7, review finding 9).
+        return bool(self.results) and all(r.passed for r in self.results)
 
     @property
     def failed(self) -> bool:

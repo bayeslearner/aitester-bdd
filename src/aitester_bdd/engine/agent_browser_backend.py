@@ -103,9 +103,20 @@ class AgentBrowserBackend:
     # CLI bridge
     # ------------------------------------------------------------------
 
-    def _run(self, *args: str, timeout: int | None = None) -> str:
+    def _run(self, *args: str, timeout: int | None = None, secrets: tuple[str, ...] = ()) -> str:
         """Run an agent-browser subprocess. Returns stdout (stripped) or
-        raises RuntimeError on a CLI failure. Empty stdout returns ""."""
+        raises RuntimeError on a CLI failure. Empty stdout returns "".
+
+        `secrets` are values that must not appear in error text or logs
+        (spec 04, review finding 7a); they still travel on the CLI's argv,
+        which agent-browser requires."""
+
+        def _redact(text: str) -> str:
+            for v in secrets:
+                if v:
+                    text = text.replace(v, "***")
+            return text
+
         cmd = ["agent-browser", "--session", self._session]
         if self._headed:
             cmd.append("--headed")
@@ -119,7 +130,7 @@ class AgentBrowserBackend:
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
-                f"agent-browser {' '.join(args)} timed out after {timeout or self._timeout}s"
+                _redact(f"agent-browser {' '.join(args)} timed out after {timeout or self._timeout}s")
             ) from exc
         except FileNotFoundError as exc:
             raise RuntimeError(
@@ -133,7 +144,7 @@ class AgentBrowserBackend:
             msg = err or out or f"exit {r.returncode}"
             # Don't raise for navigation-destruction errors during JS eval —
             # caller may want to treat that as expected.
-            raise RuntimeError(f"agent-browser {args[0]} failed: {msg}")
+            raise RuntimeError(_redact(f"agent-browser {args[0]} failed: {msg}"))
         return out
 
     # ------------------------------------------------------------------
@@ -250,9 +261,14 @@ class AgentBrowserBackend:
             f"{{ el.dispatchEvent(new MouseEvent('click', {{bubbles:true}})); "
             f"return true; }} }} return false; }}"
         )
-        result = self.evaluate_js(script)
-        if not result:
-            log.warning("click_text: no element found for %r", text)
+        if self.evaluate_js(script) is not True:
+            raise LookupError(f"click_text: no visible element contains {text!r}")
+
+    def _js_action(self, script: str, what: str, selector: str) -> None:
+        """Run a JS action that returns true on success, false when its element
+        is missing; a miss fails the step (spec 04 R7, review finding 4)."""
+        if self.evaluate_js(script) is not True:
+            raise LookupError(f"{what}: no element matched {selector!r}")
 
     def double_click(self, selector: str) -> None:
         # CLI doesn't have dblclick; emulate via JS event dispatch.
@@ -262,11 +278,11 @@ class AgentBrowserBackend:
             f"el.dispatchEvent(new MouseEvent('dblclick', {{bubbles:true}})); "
             f"return true; }}"
         )
-        self.evaluate_js(script)
+        self._js_action(script, "double_click", selector)
 
     def type(self, selector: str, value: str, *, secret: bool = False) -> None:
         # agent-browser `type` overwrites by default.
-        self._run("type", selector, value)
+        self._run("type", selector, value, secrets=(value,) if secret else ())
 
     def select(self, selector: str, value: str) -> None:
         script = (
@@ -276,7 +292,7 @@ class AgentBrowserBackend:
             f"el.dispatchEvent(new Event('change', {{bubbles:true}})); "
             f"return true; }}"
         )
-        self.evaluate_js(script)
+        self._js_action(script, "select", selector)
 
     def check(self, selector: str) -> None:
         # Click is sufficient for unchecked → checked on most inputs.
@@ -294,14 +310,14 @@ class AgentBrowserBackend:
             f"{{bubbles:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2}})); "
             f"return true; }}"
         )
-        self.evaluate_js(script)
+        self._js_action(script, "hover", selector)
 
     def focus(self, selector: str) -> None:
         script = (
             f"() => {{ const el = document.querySelector({json.dumps(selector)}); "
             f"if (el && el.focus) el.focus(); return !!el; }}"
         )
-        self.evaluate_js(script)
+        self._js_action(script, "focus", selector)
 
     def press(self, selector: str, keys: list[str]) -> None:
         # agent-browser exposes a top-level `press`. Apply each key after
@@ -469,26 +485,38 @@ class AgentBrowserBackend:
             m = re.search(r"(\d+)", out)
             return int(m.group(1)) if m else 0
 
+    def _js_bool(self, expr: str) -> bool:
+        """Evaluate a boolean JS expression. Only a real `true` is True.
+
+        `evaluate_js` maps navigation-flavoured errors to the string
+        "__NAVIGATED__", and a closed page ("Target page, context or browser
+        has been closed") matches that list; `bool()` of the sentinel was
+        truthy, so visible/enabled/checked passed on a dead page (spec 04 R7,
+        review finding 2). Raise instead.
+        """
+        v = self.evaluate_js(expr)
+        if v == "__NAVIGATED__":
+            raise RuntimeError("page navigated or closed while reading element state")
+        return v is True or v == "true"
+
     def is_visible(self, selector: str) -> bool:
-        v = self.evaluate_js(
+        return self._js_bool(
             f"(() => {{ const el = document.querySelector({json.dumps(selector)}); "
             f"if (!el) return false; "
             f"const r = el.getBoundingClientRect(); "
             f"return r.width > 0 && r.height > 0 && el.offsetParent !== null; }})()"
         )
-        return bool(v)
 
     def is_enabled(self, selector: str) -> bool:
-        v = self.evaluate_js(
-            f"!((document.querySelector({json.dumps(selector)})||{{}}).disabled)"
+        return self._js_bool(
+            f"(() => {{ const el = document.querySelector({json.dumps(selector)}); "
+            f"return !!el && !el.disabled; }})()"
         )
-        return bool(v)
 
     def is_checked(self, selector: str) -> bool:
-        v = self.evaluate_js(
+        return self._js_bool(
             f"!!((document.querySelector({json.dumps(selector)})||{{}}).checked)"
         )
-        return bool(v)
 
     def resolve_fallback_selector(self, raw: str, scope: str = "") -> str:
         def _scoped(c: str) -> str:

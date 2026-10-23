@@ -300,10 +300,17 @@ class NodriverBackend:
     # Interaction
     # ------------------------------------------------------------------
 
-    def click(self, selector: str) -> None:
+    def _require(self, selector: str, what: str):
+        """The element for `selector`, or LookupError: an action on a missing
+        element fails the step instead of doing nothing (spec 04 R7,
+        review finding 4)."""
         el = self._select(selector)
-        if el is not None:
-            self._run(el.click())
+        if el is None:
+            raise LookupError(f"{what}: no element matched {selector!r}")
+        return el
+
+    def click(self, selector: str) -> None:
+        self._run(self._require(selector, "click").click())
 
     def click_text(self, text: str) -> None:
         """Find an element by visible text and click it."""
@@ -323,29 +330,27 @@ class NodriverBackend:
             f"{{ el.dispatchEvent(new MouseEvent('click', {{bubbles:true}})); "
             f"return true; }} }} return false; }}"
         )
-        result = self.evaluate_js(script)
-        if not result:
-            log.warning("click_text: no element found for %r", text)
+        if self.evaluate_js(script) is not True:
+            raise LookupError(f"click_text: no visible element contains {text!r}")
 
     def double_click(self, selector: str) -> None:
-        el = self._select(selector)
-        if el is not None:
-            self._run(el.click())
-            self._run(el.click())
+        el = self._require(selector, "double_click")
+        self._run(el.click())
+        self._run(el.click())
 
     def type(self, selector: str, value: str, *, secret: bool = False) -> None:
-        el = self._select(selector)
-        if el is not None:
-            try:
-                self._run(el.clear_input())
-            except Exception:
-                pass
-            self._run(el.send_keys(value))
+        el = self._require(selector, "type")
+        try:
+            self._run(el.clear_input())
+        except Exception as exc:  # some inputs have nothing to clear
+            log.debug("type: clear_input failed on %r: %s", selector, exc)
+        self._run(el.send_keys(value))
 
     def select(self, selector: str, value: str) -> None:
-        el = self._select(selector)
-        if el is not None and hasattr(el, "select_option"):
-            self._run(el.select_option(value))
+        el = self._require(selector, "select")
+        if not hasattr(el, "select_option"):
+            raise TypeError(f"select: element {selector!r} is not a <select>")
+        self._run(el.select_option(value))
 
     def check(self, selector: str) -> None:
         self.click(selector)
@@ -354,19 +359,16 @@ class NodriverBackend:
         self.click(selector)
 
     def hover(self, selector: str) -> None:
-        el = self._select(selector)
-        if el is not None and hasattr(el, "mouse_move"):
-            self._run(el.mouse_move())
+        el = self._require(selector, "hover")
+        if not hasattr(el, "mouse_move"):
+            raise TypeError(f"hover: element {selector!r} cannot be hovered by this backend")
+        self._run(el.mouse_move())
 
     def focus(self, selector: str) -> None:
-        el = self._select(selector)
-        if el is not None:
-            self._run(el.click())
+        self._run(self._require(selector, "focus").click())
 
     def press(self, selector: str, keys: list[str]) -> None:
-        el = self._select(selector)
-        if el is None:
-            return
+        el = self._require(selector, "press")
         for k in keys:
             self._run(el.send_keys(k))
 

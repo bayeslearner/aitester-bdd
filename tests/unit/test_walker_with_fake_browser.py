@@ -60,7 +60,11 @@ class FakeBrowser:
     def get_class(self, css) -> str:
         return ""
     def get_count(self, css) -> int:
-        return self.count_for.get(css, 0)
+        # An element that has text or is present exists, as on a real page;
+        # the walker now refuses to read a selector that matches nothing.
+        if css in self.count_for:
+            return self.count_for[css]
+        return 1 if (css in self.text_for or self.selector_present.get(css)) else 0
     def is_visible(self, css) -> bool:
         return self.selector_present.get(css, False)
     def is_enabled(self, css) -> bool:
