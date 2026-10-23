@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-10-23
+
+What the first replays of 0.5.0 suites against Archestra 1.5.0-rc.6 showed.
+
+### Reliability
+- `write_robot_suite` refuses a locator that is only a tag name (`button`, `h1`): it matches the
+  first such element on the page, not the one the author clicked. Three of six replays failed on it.
+- `write_robot_suite` refuses a UUID in the suite unless the line carries `# fixed-id: intended`:
+  an id captured while exploring (a project the suite itself creates) is gone at replay.
+- The `browser` tool refuses a `wait <ms>` longer than the call timeout: the CLI kept waiting after
+  the call timed out and blocked the session's next commands (three 60 s timeouts in a row).
+- The author prompt says all three.
+
+### Fixed
+- gpt-6 models with tools behind a custom `AITESTER_LLM_BASE_URL`: langchain-openai switched them
+  to the stateful Responses API, which Azure-backed gateways reject across resources. The author
+  stays on chat completions unless `AITESTER_LLM_USE_RESPONSES_API=1`;
+  `AITESTER_LLM_REASONING_EFFORT` passes `reasoning_effort` (gpt-6-luna needs `none` to call tools).
+
 ## [0.5.0] - 2026-10-23
 
 Hardening after the first authoring runs against a real single-page app (specs 04 and 05).

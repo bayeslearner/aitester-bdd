@@ -78,3 +78,6 @@ afterwards); S5; P2's runtime poll loop; P4; P5; the Playwright and nodriver bac
   references (probe-774); `aitester run` replayed it in a fresh browser and both rules passed (probe-776).
   127 unit tests, ruff clean. Closed SHIPPED; S5, P2 (runtime), P4, P5 and the sandbox go to spec 06.
   Tagged v0.5.0.
+- 2026-10-23 (later): six 0.5.0 suites replayed against 1.5.0-rc.6 on gpt-6-luna; three failed on bare-tag
+  locators and an exploration-time project id, one authoring run jammed on a 240 s wait. Lint and the wait
+  cap added as 0.5.1 (CHANGELOG); the replays are the live check for it.
