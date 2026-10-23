@@ -361,6 +361,11 @@ def _build_llm(
         timeout_s, retries = llm_call_budget()
         kwargs["timeout"] = timeout_s
         kwargs["max_retries"] = retries
+    # Some OpenAI-compatible gateways refuse function tools on chat completions for
+    # newer reasoning models unless reasoning_effort is set (e.g. "none" for gpt-6-luna).
+    effort = os.environ.get("AITESTER_LLM_REASONING_EFFORT", "").strip()
+    if provider == "openai" and effort:
+        kwargs["reasoning_effort"] = effort
     _surface_client_retries()
 
     try:
