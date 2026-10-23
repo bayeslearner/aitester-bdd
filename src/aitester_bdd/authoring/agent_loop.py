@@ -366,6 +366,13 @@ def _build_llm(
     effort = os.environ.get("AITESTER_LLM_REASONING_EFFORT", "").strip()
     if provider == "openai" and effort:
         kwargs["reasoning_effort"] = effort
+    # langchain-openai switches gpt-6 with tools to the stateful Responses API, which
+    # Azure-backed gateways reject across resources ("created under a different Azure
+    # OpenAI resource"). Behind a custom base_url stay on chat completions unless asked.
+    if provider == "openai" and kwargs.get("base_url"):
+        kwargs["use_responses_api"] = (
+            os.environ.get("AITESTER_LLM_USE_RESPONSES_API", "").strip() == "1"
+        )
     _surface_client_retries()
 
     try:

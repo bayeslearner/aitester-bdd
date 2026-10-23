@@ -37,6 +37,7 @@ Its own config uses **neutral, aitester-owned** names:
 | `AITESTER_LLM_API_KEY` | (unset) | Credential for that gateway. A **blank** value is rejected up front. |
 | `AITESTER_AI_DIAGNOSIS` | `on` | `off` to disable LLM diagnosis |
 | `AITESTER_LLM_REASONING_EFFORT` | (unset) | Sent as `reasoning_effort` on OpenAI-compatible providers; some gateways need `none` for newer models to call tools over chat completions |
+| `AITESTER_LLM_USE_RESPONSES_API` | (unset) | `1` lets langchain-openai use the Responses API behind a custom `AITESTER_LLM_BASE_URL`; off by default because Azure-backed gateways reject its stateful items |
 | `AITESTER_LLM_TIMEOUT` | `60` | Seconds one explore/author model call may take before it is retried |
 | `AITESTER_LLM_MAX_RETRIES` | `3` | Retries per explore/author model call; each retry prints a `[author] model call:` line |
 | `AITESTER_AGENT_ENV` | (unset) | Comma-separated extra variables the agent's shell may see. By default it gets only `PATH`, `HOME`, locale, `TMPDIR` and `AGENT_BROWSER_*`, never API keys or test secrets |
