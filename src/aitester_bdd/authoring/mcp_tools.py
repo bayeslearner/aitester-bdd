@@ -149,6 +149,15 @@ def run_browser_command(
             )
     if argv[0] == "eval":
         log.info("browser eval: %s", " ".join(argv[1:])[:300])
+    if argv[0] == "wait" and len(argv) >= 2 and argv[1].isdigit():
+        # The CLI keeps waiting after this call times out and blocks the session's next
+        # commands for the rest of the wait (seen as three 60 s timeouts in a row).
+        cap_ms = max(1000, (timeout_s - 10) * 1000)
+        if int(argv[1]) > cap_ms:
+            return (
+                f"ERROR: wait {argv[1]} ms exceeds the {cap_ms} ms a single call may wait; "
+                f"wait in shorter steps and snapshot between them, or wait for a selector ('wait \'<css>\'')"
+            )
     binary = _binary()
     if not binary:
         return "ERROR: agent-browser CLI not found on PATH"

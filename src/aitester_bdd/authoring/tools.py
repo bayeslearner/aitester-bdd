@@ -130,6 +130,11 @@ _NON_CSS = (
 # Keyword arguments that hold a selector: quoted CSS after these words, or k=v options.
 _SELECTOR_KEYWORDS = ("locator", "selector", "into locator", "await=", "css=", "locator=", "scope ")
 _COUNT_EQ = re.compile(r'count of locator\s+"[^"]*"\s+equals\s+(\d+)', re.I)
+# A locator that is only a tag name matches the first such element on the page: the first
+# <button> on a projects page is rarely the one the author clicked during exploration.
+_BARE_TAG = re.compile(r"^(?:[a-z][a-z0-9]*)(?:\s*,\s*[a-z][a-z0-9]*)*$", re.I)
+# An id captured while exploring (a project or chat created in that session) is gone at replay.
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 _SELECTOR_RE = re.compile(r'(?:locator|selector|scope)\s+"([^"]+)"|(?:await|css|locator)=("?)([^\s"]+)\2')
 
 
@@ -175,7 +180,15 @@ def suite_problems(
     selectors: list[tuple[int, str]] = []
     for n, line in enumerate(content.splitlines(), 1):
         stripped = line.strip()
-        if stripped.startswith("#") or stripped.startswith("${") or stripped.startswith("*** "):
+        if stripped.startswith("#") or stripped.startswith("*** "):
+            continue
+        if _UUID.search(line) and "fixed-id" not in line:
+            problems.append(
+                f"line {n}: a UUID in the suite is the id of something that existed while you explored; "
+                f"a project, chat or run created by the suite gets a new id at replay. Reach it by name or "
+                f"position instead, or append '# fixed-id: intended' when the thing is permanent (an agent, a user)"
+            )
+        if stripped.startswith("${"):
             continue
         for sel in _selectors_in(line):
             selectors.append((n, sel))
@@ -186,6 +199,11 @@ def suite_problems(
                         break
                 if re.search(r"\S\|\S", sel):
                     problems.append(f"line {n}: selector {sel!r}: a fallback needs spaces around the bar ('a | b')")
+            if _BARE_TAG.match(sel) and sel.lower() not in ("html", "body"):
+                problems.append(
+                    f"line {n}: selector {sel!r} is only a tag name and matches the first such element on the "
+                    f"page; pin the one you used (data-testid, id, aria-label, href, name) or use 'When I click text \"…\"'"
+                )
         m = _COUNT_EQ.search(line)
         if m and int(m.group(1)) >= 2 and "exact-count" not in line:
             problems.append(

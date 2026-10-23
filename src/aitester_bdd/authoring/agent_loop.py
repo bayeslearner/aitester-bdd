@@ -148,6 +148,12 @@ _NAVIGATION_RULE = (
     "links, menus, tabs, mode toggles (for example an 'AI' / 'Studio' switch), "
     "breadcrumbs. Only when that also fails is the page unreachable, and the "
     "report must list each UI path you tried.\n"
+    "  - Pin to the element you used, never to a bare tag: 'button' or 'h1' as a "
+    "locator matches the first one on the page. Use data-testid, id, aria-label, "
+    "href, name, or 'When I click text \"…\"'. Never copy an id (UUID) of a "
+    "project, chat or run the suite itself creates: it changes at replay.\n"
+    "  - A long wait is 'wait' in steps of at most 45000 ms with a snapshot "
+    "between, or 'wait \'<css>\'' for the element that marks the end.\n"
 )
 
 
