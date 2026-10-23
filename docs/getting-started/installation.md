@@ -56,10 +56,10 @@ ${ENGINE}    nodriver
 The LLM is only needed at **authoring time** (`aitester author`). Running authored suites (`aitester run`) consumes zero tokens.
 
 ```bash
-# Option A: claude-code-proxy (if you have Claude Code running)
-export AITESTER_LLM_MODEL=cc/claude-opus-4-7
-export OPENAI_BASE_URL=http://localhost:20128/v1
-export OPENAI_API_KEY=placeholder
+# Option A: any OpenAI-compatible gateway (required: aitester ships no default model or endpoint)
+export AITESTER_LLM_MODEL=claude-sonnet-5-5
+export AITESTER_LLM_BASE_URL=https://your-gateway.example.com/v1
+export AITESTER_LLM_API_KEY=...
 
 # Option B: direct Anthropic API
 export AITESTER_LLM_MODEL=claude-opus-4-7-20250219

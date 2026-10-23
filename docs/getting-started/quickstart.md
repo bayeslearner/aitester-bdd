@@ -18,10 +18,10 @@ npm i -g agent-browser
 ## Configure LLM access
 
 ```bash
-# Default: claude-code-proxy (runs alongside Claude Code)
-export AITESTER_LLM_MODEL=cc/claude-opus-4-7
-export OPENAI_BASE_URL=http://localhost:20128/v1
-export OPENAI_API_KEY=placeholder
+# Required: a model on an OpenAI-compatible gateway (there is no shipped default since 0.5.0)
+export AITESTER_LLM_MODEL=claude-sonnet-5-5
+export AITESTER_LLM_BASE_URL=https://your-gateway.example.com/v1
+export AITESTER_LLM_API_KEY=...
 ```
 
 ## Author a suite

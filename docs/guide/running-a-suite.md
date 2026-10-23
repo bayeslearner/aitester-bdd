@@ -98,8 +98,8 @@ Outputs land in the RF output dir: `log.html`, `report.html`, plus
 Three variables, one value:
 
 ```bash
-export AITESTER_LLM_MODEL=cc/claude-opus-4-7          # bare name
-export OPENAI_BASE_URL=http://localhost:20128/v1      # scheme+host, not just /v1
+export AITESTER_LLM_MODEL=claude-sonnet-5-5           # bare name; required, no default
+export AITESTER_LLM_BASE_URL=https://your-gateway.example.com/v1   # scheme+host, not just /v1
 export OPENAI_API_KEY=placeholder                     # real key for other providers
 ```
 
