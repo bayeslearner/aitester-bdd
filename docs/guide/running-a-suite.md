@@ -100,7 +100,7 @@ Three variables, one value:
 ```bash
 export AITESTER_LLM_MODEL=claude-sonnet-5-5           # bare name; required, no default
 export AITESTER_LLM_BASE_URL=https://your-gateway.example.com/v1   # scheme+host, not just /v1
-export OPENAI_API_KEY=placeholder                     # real key for other providers
+export AITESTER_LLM_API_KEY=...                       # the gateway's key
 ```
 
 Set the **bare** model name for the default proxy. Leave all three unset to use
@@ -147,7 +147,7 @@ into the output dir now, not CWD — pass an absolute path to override.
 | `browser preflight FAILED — refusing to run so a stub browser cannot report a silent PASS (INV-4) … RF-Browser not initialized` | `AITESTER_BROWSER=playwright` but `rfbrowser init` never ran | `aitester init-browser`, or `AITESTER_BROWSER=agent-browser` |
 | `… agent-browser CLI not found on PATH` | agent-browser backend, CLI missing | `npm i -g @bayeslearner/agent-browser`, or switch to `playwright` |
 | `LLM configuration is invalid … OPENAI_BASE_URL is malformed` | base URL is a bare path like `/v1` | set `OPENAI_BASE_URL=http://host:port/v1` |
-| `LLM configuration is invalid … OPENAI_API_KEY is set but BLANK` | empty cred exported | unset it (uses placeholder) or set a real key |
+| `LLM configuration is invalid … is set but BLANK` | empty cred exported | unset it or set a real key |
 | `agent-browser command shapes DRIFTED` (from `doctor`) | installed agent-browser version changed a subcommand shape | pin/upgrade agent-browser to a compatible version |
 
 ## 8. Acceptance self-check

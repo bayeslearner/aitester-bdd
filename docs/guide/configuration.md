@@ -16,7 +16,7 @@ aitester-bdd is configured through environment variables, CLI flags, and in-suit
 | `AITESTER_LLM_MODEL` | (none; required for LLM steps) | Model for semantic checks, diagnosis, authoring and fluid steps |
 | `AITESTER_AI_DIAGNOSIS` | `on` | Set to `off` to skip LLM diagnosis on failure |
 | `AITESTER_WALK_LOG_MAX` | `2000` | Max entries in the in-memory walk log ring |
-| `OPENAI_BASE_URL` | `http://localhost:20128/v1` | LLM endpoint |
+| `AITESTER_LLM_BASE_URL` | (unset) | LLM endpoint of an OpenAI-compatible gateway (`OPENAI_BASE_URL` still read, deprecated) |
 | `OPENAI_API_KEY` | (required for LLM features) | API key |
 
 ## CLI flags
