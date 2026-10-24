@@ -277,8 +277,9 @@ def suite_problems(
                 if unseen:
                     problems.append(
                         f"line {n}: selector {sel!r} pins {', '.join(unseen)}, which never appeared in this "
-                        f"run's browser output; a snapshot shows accessible names, not attributes. Read the "
-                        f"element with get attr / get html / eval and pin what it returns, or use 'When I click text \"…\"'"
+                        f"run's browser output; a snapshot shows accessible names, not attributes. Run "
+                        f"'get html @eN' on the element's ref from your last snapshot and pin an attribute it prints "
+                        f"(id, data-testid, name, placeholder, href), or use 'When I click text \"…\"' with its visible words"
                     )
             if _BARE_TAG.match(sel):
                 problems.append(
