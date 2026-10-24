@@ -81,3 +81,10 @@ afterwards); S5; P2's runtime poll loop; P4; P5; the Playwright and nodriver bac
 - 2026-10-23 (later): six 0.5.0 suites replayed against 1.5.0-rc.6 on gpt-6-luna; three failed on bare-tag
   locators and an exploration-time project id, one authoring run jammed on a 240 s wait. Lint and the wait
   cap added as 0.5.1 (CHANGELOG); the replays are the live check for it.
+- 2026-10-23 (night): five rounds against rc.6 (records 789–846). Replays moved from failing on rule 1 (bare
+  tags, invented attributes) to failing on the last check rule (an author judgement on which of several
+  headings carries a sentence); the t01 navigation and form rules replay, t09 reaches the reply rule. 0.5.1
+  tagged with: lint for bare tags, exploration ids, body locators, utility-class chains, many matches and
+  unseen attribute values; wait cap; click retry on hydration; exact-text click in dialogs; client-rect
+  visibility; type-as-set; AITESTER_RUN_ID; chat-completions pinning behind a gateway.
+
