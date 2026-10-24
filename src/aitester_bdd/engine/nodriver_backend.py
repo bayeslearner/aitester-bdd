@@ -326,7 +326,7 @@ class NodriverBackend:
             f"() => {{ const t = {json.dumps(text)}; "
             f"for (const el of document.querySelectorAll("
             f"'button, a, [role=button], div[tabindex]')) {{ "
-            f"if (el.offsetParent !== null && el.textContent.includes(t)) "
+            f"if (el.getClientRects().length > 0 && el.textContent.includes(t)) "
             f"{{ el.dispatchEvent(new MouseEvent('click', {{bubbles:true}})); "
             f"return true; }} }} return false; }}"
         )

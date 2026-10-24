@@ -21,6 +21,8 @@ What the first replays of 0.5.0 suites against Archestra 1.5.0-rc.6 showed.
   chain of three or more utility classes.
 - A check that fails right after a click gets the click once more and one more look before the
   rule fails: a single-page app swallows a click that lands before it has hydrated.
+- Visibility no longer uses `offsetParent`, which is null for a `position: fixed` element: a listbox
+  option in a popover read as invisible and `When I click text "analyst"` found nothing.
 - `When I click text` picks the exact text inside an open dialog first, then exact text anywhere,
   then a substring match; a substring-first click of "Create" had hit a sidebar entry.
 - The author prompt says all of this, plus: a snapshot's quoted name is an accessible name, not an

@@ -255,7 +255,7 @@ class AgentBrowserBackend:
             "() => { const t = %s.trim(); "
             "const els = Array.from(document.querySelectorAll("
             "'button, a, [role=button], [role=menuitem], [role=option], [role=tab], div[tabindex]'))"
-            ".filter(el => el.offsetParent !== null); "
+            ".filter(el => (el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden')); "
             "const inDialog = el => !!el.closest('[role=dialog], [role=alertdialog]'); "
             "const norm = s => (s || '').replace(/\\s+/g, '').toLowerCase(); "
             "const T = norm(t); "
@@ -526,7 +526,7 @@ class AgentBrowserBackend:
             f"(() => {{ const el = document.querySelector({json.dumps(selector)}); "
             f"if (!el) return false; "
             f"const r = el.getBoundingClientRect(); "
-            f"return r.width > 0 && r.height > 0 && el.offsetParent !== null; }})()"
+            f"return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }})()"
         )
 
     def is_enabled(self, selector: str) -> bool:
