@@ -535,3 +535,12 @@ def test_a_dry_replay_that_did_not_run_does_not_count_against_the_cap(tmp_path):
     out = tools["write_robot_suite"].invoke({"content": GOOD})
     assert out.startswith("ERROR: dry replay not run") and "1 dry replay left" in out
     assert tools["write_robot_suite"].invoke({"content": GOOD}).startswith("OK")
+
+
+def test_dry_replay_closes_its_browser_session(monkeypatch, tmp_path):
+    from aitester_bdd.authoring import dry_replay as d
+    closed = []
+    monkeypatch.setattr(d, "_close_session", lambda s: closed.append(s))
+    monkeypatch.setattr(d.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
+    ok, _ = d.dry_replay("*** Test Cases ***\nT\n    No Operation\n", before=None, timeout=60)
+    assert ok and len(closed) == 1 and closed[0].startswith("aitester-dry-")

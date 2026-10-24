@@ -85,3 +85,17 @@ def inject_signin_block(suite_path: Path, fixture: Path) -> None:
     if n != 1:
         raise ValueError("suite has no [Setup] line to attach the sign-in block to")
     suite_path.write_text(new, encoding="utf-8")
+
+
+def close_session(session: str) -> None:
+    """Close the agent-browser session (its daemon and browser); errors are ignored."""
+    import shutil
+    import subprocess
+
+    binary = shutil.which("agent-browser")
+    if not binary:
+        return
+    try:
+        subprocess.run([binary, "--session", session, "close"], capture_output=True, text=True, timeout=15, check=False)
+    except Exception:
+        pass

@@ -19,6 +19,18 @@ import uuid
 from pathlib import Path
 
 
+def _close_session(session: str) -> None:
+    """Close the dry replay's browser whatever happened; the runtime closes it on a clean run,
+    a crash or a timeout does not."""
+    binary = shutil.which("agent-browser")
+    if not binary:
+        return
+    try:
+        subprocess.run([binary, "--session", session, "close"], capture_output=True, text=True, timeout=15, check=False)
+    except Exception:
+        pass
+
+
 def enabled() -> bool:
     return os.environ.get("AITESTER_DRY_REPLAY", "1").strip() != "0"
 
@@ -71,6 +83,7 @@ def dry_replay(suite_text: str, *, before: str | None = None, timeout: float | N
     before = before if before is not None else os.environ.get("AITESTER_DRY_REPLAY_BEFORE")
     timeout = timeout or timeout_s()
     tmp = Path(tempfile.mkdtemp(prefix="aitester-dry-"))
+    session = f"aitester-dry-{uuid.uuid4().hex[:8]}"
     try:
         if before:
             pre = subprocess.run(before, shell=True, capture_output=True, text=True, timeout=120, check=False)
@@ -79,7 +92,7 @@ def dry_replay(suite_text: str, *, before: str | None = None, timeout: float | N
         suite = tmp / "dry.robot"
         suite.write_text(suite_text, encoding="utf-8")
         env = dict(os.environ)
-        env["AITESTER_RUN_SESSION"] = f"aitester-dry-{uuid.uuid4().hex[:8]}"
+        env["AITESTER_RUN_SESSION"] = session
         env.setdefault("AITESTER_AI_DIAGNOSIS", "off")
         env["AITESTER_BROWSER"] = env.get("AITESTER_BROWSER") or "agent-browser"
         try:
@@ -98,3 +111,4 @@ def dry_replay(suite_text: str, *, before: str | None = None, timeout: float | N
         return False, f"dry replay failed at {first}"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+        _close_session(session)
