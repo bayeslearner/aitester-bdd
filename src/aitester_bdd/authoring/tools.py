@@ -136,6 +136,12 @@ _BARE_TAG = re.compile(r"^(?:[a-z][a-z0-9]*)(?:\s*,\s*[a-z][a-z0-9]*)*$", re.I)
 # An id captured while exploring (a project or chat created in that session) is gone at replay.
 # Three or more chained utility classes (Tailwind) describe styling, not the element.
 _UTILITY_CHAIN = re.compile(r"(\.[a-z0-9:_\-\[\]/]+){3,}", re.I)
+# Steps that act on or read one element: a selector that matches several at write time
+# will act on the first, which is rarely the one the author used.
+_SINGLE_ELEMENT = re.compile(
+    r"I click locator|into locator|I type|locator \"[^\"]+\" (has text|contains|matches|is visible|is hidden|"
+    r"is enabled|is disabled|has attribute|has class)|input \"[^\"]+\" has value|content of locator",
+)
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 _SELECTOR_RE = re.compile(r'(?:locator|selector|scope)\s+"([^"]+)"|(?:await|css|locator)=("?)([^\s"]+)\2')
 
@@ -249,10 +255,18 @@ def suite_problems(
         except Exception as exc:  # the probe is advisory; a broken probe must not pass a bad suite silently
             problems.append(f"selector check could not run in the browser: {exc}")
             return problems
-        invalid = {sel for sel, c in zip(unique, counts, strict=True) if c == -1}
+        count_of = dict(zip(unique, counts, strict=True))
+        lines = content.splitlines()
         for n, sel in selectors:
-            if sel in invalid:
+            c = count_of[sel]
+            if c == -1:
                 problems.append(f"line {n}: selector {sel!r} does not parse in the browser (not CSS)")
+            elif c > 1 and _SINGLE_ELEMENT.search(lines[n - 1]) and "first-match" not in lines[n - 1]:
+                problems.append(
+                    f"line {n}: selector {sel!r} matches {c} elements on the page right now and this step "
+                    f"acts on one; pin it further (an attribute, a scope, 'When I click text \"…\"'), or append "
+                    f"'# first-match: intended' when the first one is the one you mean"
+                )
     return problems
 
 

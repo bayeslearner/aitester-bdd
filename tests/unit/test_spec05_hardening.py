@@ -356,3 +356,13 @@ def test_failed_check_after_a_click_retries_the_click_once(monkeypatch):
     body = [Action(kind="click", target="#studio"), StateCheck(kind="selector_exists", locator="a[href='/agents']")]
     ok, *_ = walk._execute_body(b, Rule(name="r"), Verification(name="v"), body)
     assert ok and b.clicks == 2 and checks["n"] == 2
+
+
+def test_lint_rejects_a_single_element_step_whose_selector_matches_many():
+    s = GOOD + '    I define rule "pick"\n        When I click locator "[role=combobox]"\n'
+    probe = lambda sels: [3 if sel == "[role=combobox]" else 1 for sel in sels]  # noqa: E731
+    assert any("matches 3 elements" in p for p in suite_problems(s, probe=probe))
+    assert suite_problems(s.replace('"[role=combobox]"', '"[role=combobox]"  # first-match: intended'), probe=probe) == []
+    # an existence check may match many
+    s2 = GOOD + '    I define rule "pick"\n        Then selector "[role=combobox]" exists\n'
+    assert suite_problems(s2, probe=probe) == []
