@@ -8,7 +8,7 @@ Public API:
 """
 from __future__ import annotations
 
-__version__ = "0.5.2"
+__version__ = "0.5.3"
 
 # Public API surface kept intentionally small.
 # Detailed exports added as modules land.

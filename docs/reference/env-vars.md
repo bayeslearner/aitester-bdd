@@ -36,6 +36,10 @@ Its own config uses **neutral, aitester-owned** names:
 | `AITESTER_LLM_BASE_URL` | (unset) | LLM endpoint URL for an OpenAI-compatible gateway. Must be scheme+host (e.g. `https://gateway.example.com/v1`); a bare path like `/v1` is rejected up front. |
 | `AITESTER_LLM_API_KEY` | (unset) | Credential for that gateway. A **blank** value is rejected up front. |
 | `AITESTER_AI_DIAGNOSIS` | `on` | `off` to disable LLM diagnosis |
+| `AITESTER_DRY_REPLAY` | `1` | `0` skips the dry replay `write_robot_suite` runs before accepting a suite |
+| `AITESTER_DRY_REPLAY_RETRIES` | `3` | Dry-replay failures allowed per authoring run before the writer refuses for good |
+| `AITESTER_DRY_REPLAY_BEFORE` | (unset) | Shell command run before each dry replay, e.g. a lab clean-up |
+| `AITESTER_DRY_REPLAY_TIMEOUT` | `600` | Seconds one dry replay may take |
 | `AITESTER_AUTHOR_TIMEOUT` | `900` | Seconds an authoring run may take, in-process and ACP alike; `0` disables |
 | `AITESTER_RUN_ID` | set per run | One id per run, set at `I start verification` unless the caller set it; suites use `%{AITESTER_RUN_ID}` in names of what they create |
 | `AITESTER_LLM_REASONING_EFFORT` | (unset) | Sent as `reasoning_effort` on OpenAI-compatible providers; some gateways need `none` for newer models to call tools over chat completions |

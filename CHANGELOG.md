@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-10-24
+
+Spec 07 R0: a dry replay before a suite is accepted.
+
+### Added
+- `write_robot_suite` runs the suite once with Robot in a fresh browser session, from its own sign-in
+  block, before accepting it; a failure comes back as the first failing step (rule, check, expected,
+  observed) and the suite is not written. `AITESTER_DRY_REPLAY_RETRIES` (3) caps the refusals per run,
+  after which the author ends with `report_bug`; `AITESTER_DRY_REPLAY=0` turns it off;
+  `AITESTER_DRY_REPLAY_BEFORE` runs a command first (a lab clean-up); `AITESTER_DRY_REPLAY_TIMEOUT` (600 s).
+  The write-time checks judge the suite's text; this is the check that sees a click made before its page
+  rendered, the wrong element, or no wait between clicks, which every rc.6 replay ended on.
+
 ## [0.5.2] - 2026-10-23
 
 Spec 06: selectors the author proved, and a clock on the author.
