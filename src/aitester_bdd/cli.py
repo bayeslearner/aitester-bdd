@@ -134,17 +134,17 @@ def author(
     else:
         typer.echo(f"[author] ✗ unknown --agent {agent!r}; expected deepagents or acp:<command>")
         raise typer.Exit(code=2)
+    if signin and os.environ.get("AITESTER_AUTHOR_SESSION"):
+        # The fixture opened this browser for the run; close it whatever the outcome, or every
+        # authoring run leaves a Chrome behind (a thousand of them on 2026-10-24 made a sign-in time out).
+        from aitester_bdd.authoring.signin import close_session
+
+        close_session(os.environ["AITESTER_AUTHOR_SESSION"])
 
     if result.suite_path and signin:
         from aitester_bdd.authoring.signin import inject_signin_block
 
         inject_signin_block(result.suite_path, Path(signin))
-    if signin and os.environ.get("AITESTER_AUTHOR_SESSION"):
-        # The fixture opened this browser for the run; close it, or every authoring run leaves a
-        # Chrome behind (a thousand of them on 2026-10-24 made a sign-in time out).
-        from aitester_bdd.authoring.signin import close_session
-
-        close_session(os.environ["AITESTER_AUTHOR_SESSION"])
         typer.echo("[author] sign-in block written into the suite (values stay env: references)")
     if result.suite_path:
         typer.echo(f"[author] ✓ wrote suite: {result.suite_path} ({result.elapsed_s:.0f}s)")
