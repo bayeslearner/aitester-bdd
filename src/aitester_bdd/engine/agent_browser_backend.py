@@ -269,8 +269,15 @@ class AgentBrowserBackend:
             "if (!pick) return false; pick.scrollIntoView({block: 'center'}); "
             "pick.dispatchEvent(new MouseEvent('click', {bubbles: true})); return true; }"
         ) % json.dumps(text)
-        if self.evaluate_js(script) is not True:
-            raise LookupError(f"click_text: no visible element contains {text!r}")
+        # Options and menu items render a moment after their container appears;
+        # give the text up to 2 s before failing.
+        deadline = time.monotonic() + 2.0
+        while True:
+            if self.evaluate_js(script) is True:
+                return
+            if time.monotonic() >= deadline:
+                raise LookupError(f"click_text: no visible element contains {text!r}")
+            time.sleep(0.2)
 
     def _js_action(self, script: str, what: str, selector: str) -> None:
         """Run a JS action that returns true on success, false when its element
