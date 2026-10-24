@@ -448,7 +448,8 @@ def test_lint_requires_pinned_attribute_values_to_have_been_seen():
     assert suite_problems(s, observed=seen_attr) == []
     # ids too; role/type never checked; Robot variables skipped
     assert any("id=new-project-name" in p for p in suite_problems(GOOD.replace('"#ok"', '"#new-project-name"'), observed=""))
-    assert suite_problems(GOOD.replace('"#ok"', "\"[role='option'][type=button]\""), observed="") == []
+    assert any("never appeared" in p for p in suite_problems(GOOD.replace('"#ok"', "\"[role='heading']\""), observed='- heading "Projects" [level=1]'))
+    assert suite_problems(GOOD.replace('"#ok"', "\"[role='option'][type=button]\""), observed='<div role="option">') == []
     assert suite_problems(GOOD.replace('"#ok"', "\"[data-testid='${X}']\""), observed="") == []
 
 

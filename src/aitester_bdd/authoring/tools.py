@@ -150,7 +150,9 @@ _ATTR_VALUE = re.compile(r"\[\s*([a-zA-Z_:][-\w:.]*)\s*[~|^$*]?=\s*(\"([^\"]*)\"
 _ID_VALUE = re.compile(r"#([-\w]+)")
 # Names a snapshot prints in brackets that are not DOM attributes ("heading "Projects" [level=1, ref=e10]").
 _SNAPSHOT_PROPS = {"level", "ref", "expanded", "pressed", "active", "cursor", "url"}
-_UNCHECKED_ATTRS = {"role", "type", "disabled", "checked", "hidden", "selected", "open", "required", "readonly", "aria-selected", "aria-expanded", "aria-disabled", "aria-checked", "aria-hidden", "data-state"}
+# `role` is checked like any attribute: a snapshot's "heading" is a computed role, and an h1
+# carries no role attribute, so `[role=heading]` matched only the sidebar's explicit ones.
+_UNCHECKED_ATTRS = {"type", "disabled", "checked", "hidden", "selected", "open", "required", "readonly", "aria-selected", "aria-expanded", "aria-disabled", "aria-checked", "aria-hidden", "data-state"}
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 _SELECTOR_RE = re.compile(r'(?:locator|selector|scope)\s+"([^"]+)"|(?:await|css|locator)=("?)([^\s"]+)\2')
 
