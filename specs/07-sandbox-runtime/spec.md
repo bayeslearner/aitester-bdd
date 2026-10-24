@@ -1,5 +1,5 @@
 ---
-spec_id: 06-sandbox-runtime
+spec_id: 07-sandbox-runtime
 status: DRAFT
 closed_as: null
 since: 2026-10-23
@@ -8,7 +8,7 @@ epic: authoring
 features: [sandbox-run, author-interface, secret-off-argv, runtime-batched-counts, resume-on-retry, trimmed-prompt]
 supersedes: []
 superseded_by: null
-depends_on: [05-agent-safety-and-replayable-suites]
+depends_on: [06-selector-grounding]
 anchors:
   - docs/internals/authoring.md
   - docs/history/review-2026-10-23/04-SECURITY_PERFORMANCE_RELIABILITY.md

@@ -7,7 +7,7 @@ until: null
 epic: authoring
 features: [browser-tool-no-shell, credentials-by-name, shell-default-deny, origin-pinning, batched-browser-commands, fast-selector-miss, selector-lint, setup-success-marker, run-budget, cleanup-actions, invalid-selector-not-zero]
 supersedes: []
-superseded_by: 06-sandbox-runtime
+superseded_by: 07-sandbox-runtime
 depends_on: [04-agent-runtime-hardening-acp]
 anchors:
   - docs/internals/authoring.md
