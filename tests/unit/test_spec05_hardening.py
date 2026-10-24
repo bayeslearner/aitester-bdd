@@ -316,3 +316,10 @@ def test_browser_wait_longer_than_the_call_timeout_is_refused():
     from aitester_bdd.authoring.mcp_tools import run_browser_command
     out = run_browser_command("wait 240000", session="s", timeout_s=60)
     assert out.startswith("ERROR") and "50000 ms" in out
+
+
+def test_lint_rejects_body_locators_and_empty_rules():
+    s = GOOD.replace('"#ok"', '"body"')
+    assert any("only a tag name" in p for p in suite_problems(s))
+    s = GOOD + '    I define rule "cancel"\n        And I declare parents "r"\n        Then selector "html" exists\n'
+    assert any("does nothing" in p and "cancel" in p for p in suite_problems(s))

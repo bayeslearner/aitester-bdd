@@ -154,6 +154,12 @@ _NAVIGATION_RULE = (
     "project, chat or run the suite itself creates: it changes at replay.\n"
     "  - A long wait is 'wait' in steps of at most 45000 ms with a snapshot "
     "between, or 'wait \'<css>\'' for the element that marks the end.\n"
+    "  - A tool-call card shows the call's INPUT (arguments) and its OUTPUT (result) "
+    "separately; when the story asks for a result, read the output part and quote it, "
+    "never the arguments.\n"
+    "  - Every sentence of the story that says verify, record or check becomes at least "
+    "one Then line in the suite, and every clean-up the story asks for becomes an action; "
+    "a suite that stops before the story's verification is not done.\n"
 )
 
 

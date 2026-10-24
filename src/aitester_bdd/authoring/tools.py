@@ -147,6 +147,18 @@ def _selectors_in(line: str) -> list[str]:
     return out
 
 
+def _rules(content: str) -> list[tuple[str, list[str]]]:
+    """(rule name, its body lines) for every `I define rule` block in the suite."""
+    out: list[tuple[str, list[str]]] = []
+    for line in content.splitlines():
+        m = re.match(r'\s*I define rule\s+"([^"]+)"', line)
+        if m:
+            out.append((m.group(1), []))
+        elif out and line.startswith("        ") and line.strip():
+            out[-1][1].append(line.strip())
+    return out
+
+
 def suite_problems(
     content: str, *, engine: str = "agent-browser", probe: Callable[[list[str]], list[int]] | None = None,
 ) -> list[str]:
@@ -199,10 +211,11 @@ def suite_problems(
                         break
                 if re.search(r"\S\|\S", sel):
                     problems.append(f"line {n}: selector {sel!r}: a fallback needs spaces around the bar ('a | b')")
-            if _BARE_TAG.match(sel) and sel.lower() not in ("html", "body"):
+            if _BARE_TAG.match(sel):
                 problems.append(
                     f"line {n}: selector {sel!r} is only a tag name and matches the first such element on the "
-                    f"page; pin the one you used (data-testid, id, aria-label, href, name) or use 'When I click text \"…\"'"
+                    f"page (for body: the whole page, so 'contains' is true wherever the words appear); pin the "
+                    f"one you used (data-testid, id, aria-label, href, name) or use 'When I click text \"…\"'"
                 )
         m = _COUNT_EQ.search(line)
         if m and int(m.group(1)) >= 2 and "exact-count" not in line:
@@ -214,6 +227,13 @@ def suite_problems(
             problems.append(
                 f"line {n}: a shell action runs a command on the test machine at replay time; "
                 f"only when the story asks for shell checks, and then add a '# allow-shell' comment to the suite"
+            )
+    for name, body in _rules(content):
+        meaningful = [ln for ln in body if not re.search(r'declare parents|selector "(body|html)" exists', ln)]
+        if not meaningful:
+            problems.append(
+                f"rule {name!r} does nothing: it has no action and no check beyond the page existing; "
+                f"write the steps the story asks for or drop the rule"
             )
     if probe is not None and not problems and selectors:
         unique = sorted({sel for _, sel in selectors})
