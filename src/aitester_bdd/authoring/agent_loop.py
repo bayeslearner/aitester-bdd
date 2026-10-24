@@ -612,6 +612,7 @@ def _author_once(
         )
 
     messages = result.get("messages", []) if isinstance(result, dict) else []
+    budget_spent = result.get("budget_spent") if isinstance(result, dict) else None
     transcript = [
         {
             "type": type(m).__name__,
