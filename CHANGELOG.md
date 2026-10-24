@@ -27,6 +27,10 @@ What the first replays of 0.5.0 suites against Archestra 1.5.0-rc.6 showed.
   aria-label attribute (confirm with `get attr` before pinning one); a tool-call card's arguments are not its result, and
   every verify/record/clean-up sentence of the story becomes a line of the suite.
 
+### Added
+- `AITESTER_RUN_ID`: one id per run, set at `I start verification`, for the names of what a suite
+  creates (`%{AITESTER_RUN_ID}`), so a rerun never collides with an aborted run's leftovers.
+
 ### Fixed
 - gpt-6 models with tools behind a custom `AITESTER_LLM_BASE_URL`: langchain-openai switched them
   to the stateful Responses API, which Azure-backed gateways reject across resources. The author

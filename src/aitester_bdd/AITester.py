@@ -20,6 +20,8 @@ live under aitester_bdd.engine.
 from __future__ import annotations
 
 import logging
+import os
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -583,7 +585,11 @@ class AITester:
     def start_verification(self, name: str) -> None:
         """Initialize a verification run (call in Suite Setup)."""
         self._v = Verification(name=_strip_quotes(name))
-        logger.info(f"[aitester] verification started: {self._v.name}")
+        # One id per run for the names of what a suite creates (an invite address, a
+        # project), so a rerun never collides with what an aborted run left behind.
+        # Suites read it as %{AITESTER_RUN_ID}; a caller may set it first.
+        os.environ.setdefault("AITESTER_RUN_ID", time.strftime("%Y%m%d-%H%M%S"))
+        logger.info(f"[aitester] verification started: {self._v.name} (run {os.environ['AITESTER_RUN_ID']})")
 
     @keyword("Then I finalize verification")
     def finalize_verification(self) -> None:

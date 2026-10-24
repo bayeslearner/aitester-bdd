@@ -315,7 +315,11 @@ def build_tools(
         problems = suite_problems(content, engine=engine, probe=probe)
         if problems:
             # Not terminal: the agent fixes the suite and calls again.
-            return "ERROR: not a runnable suite: " + "; ".join(problems[:8])
+            return (
+                "ERROR: not a runnable suite: " + "; ".join(problems[:8])
+                + ". Fix these lines and call write_robot_suite again; a refused write is not a "
+                "reason to file a bug report."
+            )
         suite_path.parent.mkdir(parents=True, exist_ok=True)
         suite_path.write_text(content, encoding="utf-8")
         state.kind, state.path = "suite", suite_path

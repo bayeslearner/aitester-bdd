@@ -376,5 +376,16 @@ def test_click_text_prefers_exact_text_and_open_dialogs():
     b.click_text("Create")
     script = seen["script"]
     # exact match inside a dialog is tried before any substring match
-    assert script.index("inDialog(el) && txt(el) === t") < script.index("txt(el).includes(t)")
+    assert script.index("inDialog(el) && exact(el)") < script.index("txt(el).includes(T)")
     assert "role=dialog" in script
+
+
+def test_start_verification_sets_a_run_id(monkeypatch):
+    from aitester_bdd.AITester import AITester
+    monkeypatch.delenv("AITESTER_RUN_ID", raising=False)
+    AITester().start_verification("v")
+    import os
+    assert os.environ["AITESTER_RUN_ID"]
+    monkeypatch.setenv("AITESTER_RUN_ID", "fixed")
+    AITester().start_verification("v")
+    assert os.environ["AITESTER_RUN_ID"] == "fixed"

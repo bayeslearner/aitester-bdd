@@ -154,6 +154,8 @@ _NAVIGATION_RULE = (
     "project, chat or run the suite itself creates: it changes at replay.\n"
     "  - A long wait is 'wait' in steps of at most 45000 ms with a snapshot "
     "between, or 'wait \'<css>\'' for the element that marks the end.\n"
+    "  - For 'When I click text' use the stable words of the control ('Studio'), not a "
+    "badge or count that a snapshot appends to its name ('Studio (new items available)').\n"
     "  - The quoted name in a snapshot line (button \"New project\") is the accessible "
     "name computed from the element's text; it is NOT an aria-label attribute. Pin "
     "[aria-label='…'] only after 'get attr @ref aria-label' returned that value; when "

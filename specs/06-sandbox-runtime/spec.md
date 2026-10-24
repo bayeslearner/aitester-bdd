@@ -51,6 +51,14 @@ per poll.
 
 ### R5 — resume on retry (review P4); R6 — trimmed system prompt (review P5)
 
+## Candidates from the cross-project check (docs/history/review-2026-10-23/05-CROSS_PROJECT_CHECK.md)
+
+- A1: write-ahead checkpoint and resume of an aborted run, as wise-rpa-bdd has (`WiseRpaBDD.py:386-545`); R5 covers only the author thread today.
+- A2: one wall-clock budget for both authors (`AITESTER_AUTHOR_TIMEOUT` exists only on the ACP path); part of R2.
+- A3: picobay-engine's capability vocabulary (net/dom/workspace/exec, declared by plugin, granted by host) as the shape of R1's network limits.
+- A6: R3 without an agent-browser change: sign in through the Playwright backend, export storage state, start the agent-browser session from it.
+- A7 (done 0.5.1): a run id a suite can use for the names of what it creates.
+
 ## Design decisions to take first
 
 - Sandbox runtime: OrbStack machine vs Docker container; image contents and size; how the VM case
