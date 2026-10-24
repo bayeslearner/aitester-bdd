@@ -409,3 +409,9 @@ def test_browser_tool_records_what_the_agent_saw(monkeypatch):
     obs = mcp_tools.Observed()
     mcp_tools.run_browser_commands(["snapshot -c -i", "get attr @e3 aria-label"], session="s", observed=obs)
     assert "out of snapshot -c -i" in obs.text and "out of get attr @e3 aria-label" in obs.text
+    # a bare `get attr` value is recorded as the attr="value" pair the lint looks for
+    monkeypatch.setattr(mcp_tools, "run_browser_command", lambda c, **kw: "new-project-name")
+    obs = mcp_tools.Observed()
+    mcp_tools.run_browser_commands(["get attr @e5 id"], session="s", observed=obs)
+    assert 'id="new-project-name"' in obs.text
+    assert suite_problems(GOOD.replace('"#ok"', '"#new-project-name"'), observed=obs.text) == []

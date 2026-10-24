@@ -185,6 +185,20 @@ def run_browser_command(
     return text[:_MAX_OUTPUT]
 
 
+def _as_seen(command: str, out: str) -> str:
+    """What a command's output proves about the page, in the `attr="value"` form the suite
+    lint looks for: `get attr <sel> <attr>` prints the bare value, so the pair is rebuilt."""
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return out
+    if argv and argv[0] == "agent-browser":
+        argv = argv[1:]
+    if len(argv) >= 4 and argv[0] == "get" and argv[1] == "attr" and out and not out.startswith(("ERROR", "exit ")):
+        return f'{out}\n{argv[3]}="{out.strip()}"'
+    return out
+
+
 class Observed:
     """Everything the browser tool returned to the agent in this run: the text a pinned
     attribute value has to appear in (`suite_problems(observed=…)`). Bounded."""
@@ -214,13 +228,13 @@ def run_browser_commands(
     if len(commands) == 1:
         out = run_browser_command(commands[0], session=session, timeout_s=timeout_s, base_url=base_url)
         if observed is not None:
-            observed.add(out)
+            observed.add(_as_seen(commands[0], out))
         return out
     parts = []
     for i, c in enumerate(commands, 1):
         out = run_browser_command(c, session=session, timeout_s=timeout_s, base_url=base_url)
         if observed is not None:
-            observed.add(out)
+            observed.add(_as_seen(c, out))
         parts.append(f"[{i}] {c}\n{out}")
         if out.startswith("ERROR") or out.startswith("exit "):
             parts.append(f"(stopped: command {i} failed; {len(commands) - i} not run)")
