@@ -122,6 +122,37 @@ def get_counts(selectors: list[str], *, session: str, timeout_s: int = 30) -> li
     raise RuntimeError(f"agent-browser eval for element counts failed: {(r.stderr or out)[:300]}")
 
 
+_MATCH_ATTRS = ("id", "data-testid", "aria-label", "name", "placeholder", "href", "role", "data-slot", "type")
+
+
+def get_matches(selectors: list[str], *, session: str, timeout_s: int = 30, limit: int = 5) -> list[dict]:
+    """What each CSS selector matches on the current page, in one eval: {count, items}, each
+    item {tag, text (first 80 chars), attrs}; count -1 for a selector the browser cannot parse.
+    The suite lint uses it to refuse a single-element step whose selector matches several
+    elements, naming each so the author can pin one (spec 06 R1)."""
+    binary = _binary()
+    if not binary or not selectors:
+        return [{"count": -1, "items": []} for _ in selectors] if not binary else []
+    js = (
+        "(() => { const sels = " + json.dumps(selectors) + "; const attrs = " + json.dumps(list(_MATCH_ATTRS)) + "; "
+        "return JSON.stringify(sels.map(s => { let els; try { els = Array.from(document.querySelectorAll(s)); } "
+        "catch (e) { return {count: -1, items: []}; } return {count: els.length, items: els.slice(0, " + str(limit) + ").map(el => ({"
+        "tag: el.tagName.toLowerCase(), text: (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 80), "
+        "attrs: Object.fromEntries(attrs.filter(a => el.hasAttribute(a)).map(a => [a, el.getAttribute(a).slice(0, 80)]))}))}; })); })()"
+    )
+    r = subprocess.run([binary, "--session", session, "eval", js], capture_output=True, text=True, timeout=timeout_s, check=False)
+    out = (r.stdout or "").strip()
+    try:
+        parsed = json.loads(out)
+        if isinstance(parsed, str):
+            parsed = json.loads(parsed)
+        if isinstance(parsed, list) and len(parsed) == len(selectors):
+            return parsed
+    except (ValueError, TypeError):
+        pass
+    raise RuntimeError(f"agent-browser eval for element matches failed: {(r.stderr or out)[:300]}")
+
+
 def run_browser_command(
     command: str, *, session: str, timeout_s: int = 60, base_url: str | None = None,
 ) -> str:
@@ -278,6 +309,9 @@ def build_server(
     def probe(selectors: list[str]) -> list[int]:
         return get_counts(selectors, session=session)
 
+    def matches(selectors: list[str]) -> list[dict]:
+        return get_matches(selectors, session=session)
+
     observed = Observed()
 
     @server.tool(description=(
@@ -298,7 +332,7 @@ def build_server(
         "back so you can fix it. On success, stop: the task is done."
     ))
     def write_robot_suite(content: str) -> str:
-        problems = suite_problems(content, engine=engine, probe=probe, observed=observed.text)
+        problems = suite_problems(content, engine=engine, probe=probe, observed=observed.text, matches=matches)
         if problems:
             return (
                 "ERROR: not a runnable suite: " + "; ".join(problems[:8])

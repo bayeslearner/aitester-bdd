@@ -113,6 +113,17 @@ def _element_present(browser: BrowserAdapter, css: str, timeout_ms: int) -> bool
     return False
 
 
+def _texts_of(browser, selector: str) -> list[str]:
+    """The text of every element `selector` matches; a backend without `get_texts` gives one."""
+    getter = getattr(browser, "get_texts", None)
+    if getter is not None:
+        try:
+            return list(getter(selector))
+        except Exception:
+            return []
+    return [browser.get_text(selector)]
+
+
 def _eval_state_check(
     browser: BrowserAdapter, sc: StateCheck, *, timeout_ms: int, scope: str = "",
 ) -> tuple[bool, str, str]:
@@ -236,46 +247,29 @@ def _eval_state_check(
         return (obs <= threshold, f"count <= {expected}", str(obs))
 
     # ── Element text (poll until match or timeout, like URL checks) ────
-    if kind == "has_text":
-        obs = browser.get_text(css_resolved).strip()
-        ok = obs == expected
+    # A text check reads every element the selector matches (spec 06 R1): the author pins the
+    # element that carries the text, and a page with two alerts is judged on both.
+    if kind in ("has_text", "contains", "matches", "not_contains"):
+        def _judge() -> tuple[bool, str]:
+            texts = _texts_of(browser, css_resolved)
+            if kind == "has_text":
+                hit = any(t.strip() == expected for t in texts)
+            elif kind == "contains":
+                hit = any(expected in t for t in texts)
+            elif kind == "matches":
+                hit = any(re.search(expected, t) for t in texts)
+            else:
+                hit = not any(expected in t for t in texts)
+            return hit, " | ".join(t.strip() for t in texts)
+        ok, obs = _judge()
         if not ok and timeout_ms >= 500:
             end = time.time() + timeout_ms / 1000
             while time.time() < end and not ok:
                 time.sleep(0.15)
-                obs = browser.get_text(css_resolved).strip()
-                ok = obs == expected
-        return (ok, expected, obs)
-    if kind == "contains":
-        obs = browser.get_text(css_resolved)
-        ok = expected in obs
-        if not ok and timeout_ms >= 500:
-            end = time.time() + timeout_ms / 1000
-            while time.time() < end and not ok:
-                time.sleep(0.15)
-                obs = browser.get_text(css_resolved)
-                ok = expected in obs
-        return (ok, f"contains {expected!r}", obs)
-    if kind == "matches":
-        obs = browser.get_text(css_resolved)
-        ok = bool(re.search(expected, obs))
-        if not ok and timeout_ms >= 500:
-            end = time.time() + timeout_ms / 1000
-            while time.time() < end and not ok:
-                time.sleep(0.15)
-                obs = browser.get_text(css_resolved)
-                ok = bool(re.search(expected, obs))
-        return (ok, f"matches {expected!r}", obs)
-    if kind == "not_contains":
-        obs = browser.get_text(css_resolved)
-        ok = expected not in obs
-        if not ok and timeout_ms >= 500:
-            end = time.time() + timeout_ms / 1000
-            while time.time() < end and not ok:
-                time.sleep(0.15)
-                obs = browser.get_text(css_resolved)
-                ok = expected not in obs
-        return (ok, f"not contains {expected!r}", obs)
+                ok, obs = _judge()
+        label = {"has_text": expected, "contains": f"contains {expected!r}",
+                 "matches": f"matches {expected!r}", "not_contains": f"not contains {expected!r}"}[kind]
+        return (ok, label, obs)
 
     # ── Element state ──────────────────────────────────────────────────
     if kind == "visible":

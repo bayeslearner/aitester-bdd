@@ -268,7 +268,7 @@ class AgentBrowserBackend:
             "|| els.find(el => txt(el).includes(T) || label(el).includes(T)); "
             "if (!pick) return false; pick.scrollIntoView({block: 'center'}); "
             "pick.dispatchEvent(new MouseEvent('click', {bubbles: true})); return true; }"
-        ) % json.dumps(text)
+        ).replace("%s", json.dumps(text), 1)
         # Options and menu items render a moment after their container appears;
         # give the text up to 2 s before failing.
         deadline = time.monotonic() + 2.0
@@ -474,6 +474,18 @@ class AgentBrowserBackend:
             return self._run("get", "text", selector)
         except Exception:
             return ""
+
+    def get_texts(self, selector: str) -> list[str]:
+        """The text of every element the selector matches (text checks read them all)."""
+        v = self.evaluate_js(
+            f"JSON.stringify(Array.from(document.querySelectorAll({json.dumps(selector)}))"
+            f".map(el => (el.innerText || el.textContent || '')))"
+        )
+        try:
+            parsed = json.loads(v) if isinstance(v, str) else v
+            return [str(x) for x in parsed] if isinstance(parsed, list) else []
+        except (ValueError, TypeError):
+            return []
 
     def get_attribute(self, selector: str, attr: str) -> str:
         v = self.evaluate_js(

@@ -190,9 +190,28 @@ def _unseen_values(sel: str, observed: str) -> list[str]:
     return out
 
 
+_TEXT_CHECK = re.compile(r'locator\s+"[^"]+"\s+(has text|contains|matches|does not contain)\s+"([^"]*)"')
+
+
+def _describe(items: list[dict]) -> str:
+    out = []
+    for i, it in enumerate(items):
+        attrs = " ".join(f"{k}={v!r}" for k, v in (it.get("attrs") or {}).items())
+        out.append(f"[{i}] <{it.get('tag')}> {it.get('text', '')!r}" + (f" {attrs}" if attrs else ""))
+    return "; ".join(out)
+
+
+def _holds(kind: str, text: str, expected: str) -> bool:
+    if kind == "has text":
+        return text.strip() == expected
+    if kind == "matches":
+        return bool(re.search(expected, text))
+    return expected in text
+
+
 def suite_problems(
     content: str, *, engine: str = "agent-browser", probe: Callable[[list[str]], list[int]] | None = None,
-    observed: str | None = None,
+    observed: str | None = None, matches: Callable[[list[str]], list[dict]] | None = None,
 ) -> list[str]:
     """Why `content` is not a runnable .robot suite; empty when it is.
 
@@ -280,7 +299,44 @@ def suite_problems(
                 f"rule {name!r} does nothing: it has no action and no check beyond the page existing; "
                 f"write the steps the story asks for or drop the rule"
             )
-    if probe is not None and not problems and selectors:
+    if matches is not None and not problems and selectors:
+        # Spec 06 R1: a step that acts on or reads one element pins one element. What each
+        # selector matches is read from the live page; there is no comment that turns this off.
+        unique = sorted({sel for _, sel in selectors})
+        try:
+            found = dict(zip(unique, matches(unique), strict=True))
+        except Exception as exc:
+            problems.append(f"selector check could not run in the browser: {exc}")
+            return problems
+        lines = content.splitlines()
+        for n, sel in selectors:
+            m = found[sel]
+            c, items = int(m.get("count", -1)), list(m.get("items") or [])
+            line = lines[n - 1]
+            if c == -1:
+                problems.append(f"line {n}: selector {sel!r} does not parse in the browser (not CSS)")
+                continue
+            if c <= 1 or not _SINGLE_ELEMENT.search(line):
+                continue
+            tm = _TEXT_CHECK.search(line)
+            if tm and tm.group(1) != "does not contain":
+                kind, expected = tm.group(1), tm.group(2)
+                if "${" in expected or "%{" in expected:
+                    continue
+                holders = [i for i, it in enumerate(items) if _holds(kind, it.get("text", ""), expected)]
+                if len(holders) == 1:
+                    continue  # the runtime reads every match for a text check; one holds the text
+                problems.append(
+                    f"line {n}: selector {sel!r} matches {c} elements and "
+                    + (f"{len(holders)} of the first {len(items)} hold the text" if holders else f"none of the first {len(items)} holds {expected!r}")
+                    + f": {_describe(items)}. Pin the one element that carries the text, with one of its attributes or a scope"
+                )
+                continue
+            problems.append(
+                f"line {n}: selector {sel!r} matches {c} elements on the page right now and this step acts on "
+                f"one: {_describe(items)}. Pin the one you used (an attribute of it, a scope, or 'When I click text \"…\"')"
+            )
+    elif probe is not None and not problems and selectors:
         unique = sorted({sel for _, sel in selectors})
         try:
             counts = probe(unique)
@@ -293,11 +349,10 @@ def suite_problems(
             c = count_of[sel]
             if c == -1:
                 problems.append(f"line {n}: selector {sel!r} does not parse in the browser (not CSS)")
-            elif c > 1 and _SINGLE_ELEMENT.search(lines[n - 1]) and "first-match" not in lines[n - 1]:
+            elif c > 1 and _SINGLE_ELEMENT.search(lines[n - 1]):
                 problems.append(
                     f"line {n}: selector {sel!r} matches {c} elements on the page right now and this step "
-                    f"acts on one; pin it further (an attribute, a scope, 'When I click text \"…\"'), or append "
-                    f"'# first-match: intended' when the first one is the one you mean"
+                    f"acts on one; pin it further (an attribute, a scope, 'When I click text \"…\"')"
                 )
     return problems
 
@@ -337,7 +392,7 @@ class ReportBugParams(BaseModel):
 def build_tools(
     state: TerminalState, *, suite_path: Path, bug_report_path: Path,
     engine: str = "agent-browser", probe: Callable[[list[str]], list[int]] | None = None,
-    observed: Any = None,
+    observed: Any = None, matches: Callable[[list[str]], list[dict]] | None = None,
 ) -> list[StructuredTool]:
     """The two author-mode terminal tools, writing to fixed paths. The agent
     drives the page through the `browser` tool (`build_browser_tool`)."""
@@ -346,7 +401,7 @@ def build_tools(
         if refusal := state._refusal():
             return refusal
         problems = suite_problems(
-            content, engine=engine, probe=probe,
+            content, engine=engine, probe=probe, matches=matches,
             observed=observed.text if observed is not None else None,
         )
         if problems:

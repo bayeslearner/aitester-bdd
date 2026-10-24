@@ -402,6 +402,15 @@ def _build_llm(
         ) from exc
 
 
+def author_budget_s() -> float:
+    """Seconds the whole authoring run may take; 0 disables. `AITESTER_AUTHOR_TIMEOUT`,
+    default 900, shared with the ACP author."""
+    try:
+        return max(0.0, float(os.environ.get("AITESTER_AUTHOR_TIMEOUT", "900")))
+    except ValueError:
+        return 900.0
+
+
 def llm_call_budget() -> tuple[float, int]:
     """(per-call timeout in seconds, retries) from AITESTER_LLM_TIMEOUT and
     AITESTER_LLM_MAX_RETRIES; defaults 60 s and 3 (spec 04 R2)."""
@@ -524,7 +533,7 @@ def _author_once(
     from deepagents import create_deep_agent
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from aitester_bdd.authoring.mcp_tools import BROWSER_HELP, get_counts
+    from aitester_bdd.authoring.mcp_tools import BROWSER_HELP, get_counts, get_matches
     from aitester_bdd.authoring.tools import (
         TerminalState,
         build_browser_tool,
@@ -547,6 +556,7 @@ def _author_once(
     tools = build_tools(
         state, suite_path=suite_path, bug_report_path=bug_report_path, engine=engine,
         probe=lambda sels: get_counts(sels, session=browser_session), observed=observed,
+        matches=lambda sels: get_matches(sels, session=browser_session),
     )
     system_prompt = build_system_prompt(mode, pinning=pinning)
 
@@ -863,6 +873,9 @@ def _invoke_streaming(agent, user_message: str, config: dict, *, debug: bool, la
     step = 0  # every message after the prompt (debug numbering)
     turns = 0  # model turns (the brief progress line)
     seen_ids: set[str] = set()
+    # Wall clock on the whole authoring run (spec 06 R2); the ACP path reads the same variable.
+    budget_s = author_budget_s()
+    budget_spent = False
 
     for chunk in agent.stream(
         {"messages": [{"role": "user", "content": user_message}]},
@@ -870,6 +883,10 @@ def _invoke_streaming(agent, user_message: str, config: dict, *, debug: bool, la
         stream_mode="values",
     ):
         final_state = chunk
+        if budget_s and time.monotonic() - t0 > budget_s:
+            budget_spent = True
+            _brief(f"author budget of {budget_s:.0f} s spent after {turns} steps; stopping")
+            break
         messages = chunk.get("messages", []) if isinstance(chunk, dict) else []
         # Print only messages we haven't logged yet (id-based dedup).
         for m in messages:
@@ -915,6 +932,8 @@ def _invoke_streaming(agent, user_message: str, config: dict, *, debug: bool, la
         _log(f"{tag} loop done in {step} steps")
     else:
         _brief(f"done in {turns} steps")
+    if budget_spent and isinstance(final_state, dict):
+        final_state = {**final_state, "budget_spent": budget_s}
     return final_state
 
 

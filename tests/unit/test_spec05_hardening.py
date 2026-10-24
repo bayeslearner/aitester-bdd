@@ -362,10 +362,59 @@ def test_lint_rejects_a_single_element_step_whose_selector_matches_many():
     s = GOOD + '    I define rule "pick"\n        When I click locator "[role=combobox]"\n'
     probe = lambda sels: [3 if sel == "[role=combobox]" else 1 for sel in sels]  # noqa: E731
     assert any("matches 3 elements" in p for p in suite_problems(s, probe=probe))
-    assert suite_problems(s.replace('"[role=combobox]"', '"[role=combobox]"  # first-match: intended'), probe=probe) == []
+    # there is no comment that switches the check off (spec 06 R1)
+    assert any("matches 3 elements" in p for p in suite_problems(s.replace('"[role=combobox]"', '"[role=combobox]"  # first-match: intended'), probe=probe))
     # an existence check may match many
     s2 = GOOD + '    I define rule "pick"\n        Then selector "[role=combobox]" exists\n'
     assert suite_problems(s2, probe=probe) == []
+
+
+def _matches_for(table):
+    def matches(sels):
+        return [table.get(sel, {"count": 1, "items": [{"tag": "div", "text": "", "attrs": {}}]}) for sel in sels]
+    return matches
+
+
+def test_lint_names_each_match_and_accepts_the_one_that_holds_the_text():
+    two = {"count": 2, "items": [
+        {"tag": "h3", "text": "ChatGPT Subscription required", "attrs": {"data-slot": "alert-title"}},
+        {"tag": "h3", "text": "Connect your ChatGPT subscription before creating the agent", "attrs": {}}]}
+    s = GOOD + '    I define rule "r2"\n        Then locator "h3.flex" contains "Connect your ChatGPT"\n'
+    assert suite_problems(s, matches=_matches_for({"h3.flex": two})) == []   # one match holds it: the runtime reads all
+    s = GOOD + '    I define rule "r2"\n        Then locator "h3.flex" contains "Model"\n'
+    (p,) = suite_problems(s, matches=_matches_for({"h3.flex": two}))
+    assert "none of the first 2 holds 'Model'" in p and "[0] <h3> 'ChatGPT Subscription required' data-slot='alert-title'" in p
+    s = GOOD + '    I define rule "r3"\n        When I click locator "h3.flex"\n'
+    (p,) = suite_problems(s, matches=_matches_for({"h3.flex": two}))
+    assert "matches 2 elements" in p and "[1] <h3>" in p
+
+
+def test_text_checks_read_every_matched_element():
+    from aitester_bdd.AITester import StateCheck
+    from aitester_bdd.engine import walk
+
+    class B:
+        def resolve_fallback_selector(self, css, scope):
+            return css
+        def get_count(self, sel):
+            return 2
+        def get_texts(self, sel):
+            return ["ChatGPT Subscription required", "Connect your ChatGPT subscription before creating the agent"]
+        def get_text(self, sel):
+            return "ChatGPT Subscription required"
+
+    ok, _, obs = walk._eval_state_check(B(), StateCheck(kind="contains", locator="h3", expected="Connect your"), timeout_ms=0, scope="")
+    assert ok and "Connect your" in obs
+    ok, *_ = walk._eval_state_check(B(), StateCheck(kind="not_contains", locator="h3", expected="Connect your"), timeout_ms=0, scope="")
+    assert not ok
+
+
+def test_author_budget_reads_the_shared_variable(monkeypatch):
+    from aitester_bdd.authoring.agent_loop import author_budget_s
+    monkeypatch.setenv("AITESTER_AUTHOR_TIMEOUT", "120")
+    assert author_budget_s() == 120.0
+    monkeypatch.setenv("AITESTER_AUTHOR_TIMEOUT", "0")
+    assert author_budget_s() == 0.0
 
 
 def test_click_text_prefers_exact_text_and_open_dialogs():
