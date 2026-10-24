@@ -564,3 +564,19 @@ def test_failed_dry_replay_is_kept_when_asked(monkeypatch, tmp_path):
     assert not ok and "run kept at" in summary
     kept = next((tmp_path / "keep").iterdir())
     assert (kept / "dry.robot").exists() and (kept / "robot-stdout.txt").read_text().startswith("T | FAIL")
+
+
+def test_dry_replay_injects_the_fixture_sign_in_block(monkeypatch, tmp_path):
+    from aitester_bdd.authoring import dry_replay as d
+    fixture = tmp_path / "signin.fixture"
+    fixture.write_text("action=open url=https://app/sign-in\naction=input css=input[type=email] value=env:E\nskip_when=[data-ok]\n")
+    monkeypatch.setenv("AITESTER_DRY_REPLAY_SIGNIN", str(fixture))
+    monkeypatch.setattr(d, "_close_session", lambda s: None)
+    seen = {}
+    def fake_run(cmd, **kw):
+        seen["suite"] = __import__("pathlib").Path(cmd[-1]).read_text()
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    monkeypatch.setattr(d.subprocess, "run", fake_run)
+    suite = "*** Test Cases ***\nT\n    [Setup]    Given I start scenario \"s\" at \"https://app\"\n    I define rule \"r\"\n        Then selector \"#ok\" exists\n"
+    ok, _ = d.dry_replay(suite, before=None, timeout=60)
+    assert ok and "I configure state setup    action=open    url=https://app/sign-in" in seen["suite"] and "skip_when=[data-ok]" in seen["suite"]

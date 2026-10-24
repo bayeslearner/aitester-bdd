@@ -96,6 +96,7 @@ def author(
             typer.echo(f"[author] ✗ sign-in fixture failed: {exc}")
             raise typer.Exit(code=2) from exc
         os.environ["AITESTER_AUTHOR_SESSION"] = session
+        os.environ["AITESTER_DRY_REPLAY_SIGNIN"] = str(Path(signin).resolve())  # the dry replay signs in the same way
         typer.echo(f"[author] signed in (fixture {signin}); session {session}")
 
     if agent.startswith("acp:"):

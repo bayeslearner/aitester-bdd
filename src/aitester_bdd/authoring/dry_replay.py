@@ -121,6 +121,17 @@ def dry_replay(suite_text: str, *, before: str | None = None, timeout: float | N
                 return False, f"dry replay not run: the before-command failed ({pre.returncode}): {(pre.stderr or pre.stdout)[-300:]}"
         suite = tmp / "dry.robot"
         suite.write_text(suite_text, encoding="utf-8")
+        # The author writes the suite without its sign-in block; the CLI injects the fixture's
+        # block after acceptance. The dry replay needs it now, or it runs signed out (the first
+        # kept failure of 2026-10-24 was a screenshot of the sign-in page).
+        fixture = os.environ.get("AITESTER_DRY_REPLAY_SIGNIN", "").strip()
+        if fixture:
+            from aitester_bdd.authoring.signin import inject_signin_block
+
+            try:
+                inject_signin_block(suite, Path(fixture))
+            except ValueError as exc:
+                return False, f"dry replay not run: {exc}"
         env = dict(os.environ)
         env["AITESTER_RUN_SESSION"] = session
         env.setdefault("AITESTER_AI_DIAGNOSIS", "off")
