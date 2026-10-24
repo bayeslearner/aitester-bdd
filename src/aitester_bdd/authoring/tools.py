@@ -482,7 +482,8 @@ def build_tools(
                 )
             ok, summary = dry_replay(content)
             if not ok:
-                dry_failures["n"] += 1
+                if not summary.startswith("dry replay not run"):
+                    dry_failures["n"] += 1  # a harness fault is not the author's retry
                 left = dry_replay_retries - dry_failures["n"]
                 return (
                     f"ERROR: {summary}. The suite is not accepted. Fix that step (a wait or existence check "

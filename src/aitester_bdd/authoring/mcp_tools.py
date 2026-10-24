@@ -350,7 +350,8 @@ def build_server(
                 )
             ok, summary = _dry.dry_replay(content)
             if not ok:
-                dry_failures["n"] += 1
+                if not summary.startswith("dry replay not run"):
+                    dry_failures["n"] += 1  # a harness fault is not the author's retry
                 left = _dry.retries() - dry_failures["n"]
                 return (
                     f"ERROR: {summary}. The suite is not accepted. Fix that step and call write_robot_suite "

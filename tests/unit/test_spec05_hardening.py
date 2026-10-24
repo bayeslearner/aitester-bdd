@@ -526,3 +526,12 @@ def test_dry_replay_reports_the_first_failing_step(tmp_path):
         '{"kind":"state_check","rule":"open","check":"selector_exists","locator":"#a","ok":true}\n'
         '{"kind":"state_check","rule":"pick","check":"contains","locator":"h1","ok":false,"expected":"contains x","observed":"Today"}\n')
     assert "rule 'pick': check contains on 'h1' failed" in d._first_failure(tmp_path / "out")
+
+
+def test_a_dry_replay_that_did_not_run_does_not_count_against_the_cap(tmp_path):
+    from aitester_bdd.authoring.tools import TerminalState, build_tools
+    answers = iter([(False, "dry replay not run: the before-command failed (127): no such file"), (True, "dry replay passed")])
+    tools = {t.name: t for t in build_tools(TerminalState(), suite_path=tmp_path / "s.robot", bug_report_path=tmp_path / "b.md", dry_replay=lambda c: next(answers), dry_replay_retries=1)}
+    out = tools["write_robot_suite"].invoke({"content": GOOD})
+    assert out.startswith("ERROR: dry replay not run") and "1 dry replay left" in out
+    assert tools["write_robot_suite"].invoke({"content": GOOD}).startswith("OK")
