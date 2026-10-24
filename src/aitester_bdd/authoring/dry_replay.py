@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -29,6 +30,24 @@ def _close_session(session: str) -> None:
         subprocess.run([binary, "--session", session, "close"], capture_output=True, text=True, timeout=15, check=False)
     except Exception:
         pass
+
+
+def _keep(tmp: Path, suite_text: str, stdout: str) -> str | None:
+    """Copy a failed dry replay (suite, Robot output, walk log, screenshots) under
+    `AITESTER_DRY_REPLAY_KEEP`, so the failure can be looked at after the run."""
+    root = os.environ.get("AITESTER_DRY_REPLAY_KEEP", "").strip()
+    if not root:
+        return None
+    try:
+        dest = Path(root) / f"dry-{time.strftime('%H%M%S')}-{uuid.uuid4().hex[:4]}"
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "dry.robot").write_text(suite_text, encoding="utf-8")
+        (dest / "robot-stdout.txt").write_text(stdout, encoding="utf-8")
+        if (tmp / "out").exists():
+            shutil.copytree(tmp / "out", dest / "out", dirs_exist_ok=True)
+        return str(dest)
+    except OSError:
+        return None
 
 
 def enabled() -> bool:
@@ -119,7 +138,8 @@ def dry_replay(suite_text: str, *, before: str | None = None, timeout: float | N
         if first is None:
             tail = "\n".join((r.stdout or "").splitlines()[-12:])
             first = f"Robot: {tail[-600:]}"
-        return False, f"dry replay failed at {first}"
+        kept = _keep(tmp, suite_text, r.stdout or "")
+        return False, f"dry replay failed at {first}" + (f" (run kept at {kept})" if kept else "")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
         _close_session(session)

@@ -553,3 +553,14 @@ def test_dry_replay_quotes_the_action_error(tmp_path):
     (out / "walk_log.jsonl").write_text('{"kind":"after_action","rule":"open","action":"click_text","target":"Studio","raised":true}\n')
     msg = d._first_failure(tmp_path / "out", "T | FAIL |\n  ✗ open / open: action — action raised twice: LookupError: click_text: no visible element contains 'Studio'\n")
     assert "action click_text on 'Studio' raised: " in msg and "no visible element contains 'Studio'" in msg
+
+
+def test_failed_dry_replay_is_kept_when_asked(monkeypatch, tmp_path):
+    from aitester_bdd.authoring import dry_replay as d
+    monkeypatch.setenv("AITESTER_DRY_REPLAY_KEEP", str(tmp_path / "keep"))
+    monkeypatch.setattr(d, "_close_session", lambda s: None)
+    monkeypatch.setattr(d.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 1, "stdout": "T | FAIL |\nx raised: boom", "stderr": ""})())
+    ok, summary = d.dry_replay("*** Test Cases ***\nT\n    No Operation\n", before=None, timeout=60)
+    assert not ok and "run kept at" in summary
+    kept = next((tmp_path / "keep").iterdir())
+    assert (kept / "dry.robot").exists() and (kept / "robot-stdout.txt").read_text().startswith("T | FAIL")

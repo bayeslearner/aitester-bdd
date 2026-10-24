@@ -39,6 +39,7 @@ Its own config uses **neutral, aitester-owned** names:
 | `AITESTER_DRY_REPLAY` | `1` | `0` skips the dry replay `write_robot_suite` runs before accepting a suite |
 | `AITESTER_DRY_REPLAY_RETRIES` | `3` | Dry-replay failures allowed per authoring run before the writer refuses for good |
 | `AITESTER_DRY_REPLAY_BEFORE` | (unset) | Shell command run before each dry replay, e.g. a lab clean-up |
+| `AITESTER_DRY_REPLAY_KEEP` | (unset) | Directory where a failed dry replay's suite, Robot output, walk log and screenshots are kept |
 | `AITESTER_DRY_REPLAY_TIMEOUT` | `600` | Seconds one dry replay may take |
 | `AITESTER_AUTHOR_TIMEOUT` | `900` | Seconds an authoring run may take, in-process and ACP alike; `0` disables |
 | `AITESTER_RUN_ID` | set per run | One id per run, set at `I start verification` unless the caller set it; suites use `%{AITESTER_RUN_ID}` in names of what they create |
