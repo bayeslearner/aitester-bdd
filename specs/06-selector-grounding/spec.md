@@ -67,11 +67,11 @@ the author's exploration and the replay share one id).
 
 ## Tasks
 
-- [ ] R1 `get_matches` + lint + tests; prompt text; remove `first-match`
-- [ ] R2 budget + test
-- [ ] R3 wrappers (investigation repo, no commit there)
-- [ ] Rerun the six rc.6 stories (records from 847); each replay that fails names an app cause
-- [ ] Tag v0.5.2 when the unit tests and the live round are green; CHANGELOG
+- [x] R1 `get_matches` + lint + tests; prompt text; remove `first-match` (41b02a7, 25a6817, 6c9b857, 5d57cf4, 06fd012, 5c87c72)
+- [x] R2 budget + test (41b02a7, d44c170)
+- [x] R3 wrappers: env: grammar, LLM exports only for fluid suites, AITESTER_RUN_ID, a replay starts from a clean lab (investigation `src/archestra_n8n/ui_tests/run_suite.sh`)
+- [x] Rerun: records 847–878 in five rounds; no replay passed whole; each failure is named in its record (below)
+- [x] v0.5.2 tagged on green unit tests (143); the live round is not green, see the log
 
 ## Verification
 
@@ -82,3 +82,19 @@ the author's exploration and the replay share one id).
 ## Log
 
 - 2026-10-23 (night): opened on the coordinator's direction after the rc.6 rounds; sandbox renumbered to 07.
+- 2026-10-24 00:10: five rounds on rc.6 with the author on gpt-6-luna (records 847–878). What the rounds
+  settled: the many-match check no longer has an escape and names each match; text checks read every
+  match; snapshot properties and `role` go through the seen-attribute check; unknown keywords are refused
+  at write time; a replay starts from a clean lab (two earlier "heading" failures were the app refusing a
+  duplicate project name left by the authoring run, probe-858/865); `click text` waits 10 s. Where the
+  replays stand: t09 3 of 4 rules (the reply rule pinned a label inside a collapsed card, probe-870, while
+  the chat finished, probe-1002); t04 2 of 6 (project created; the suite clicked the composer instead of
+  the agent selector, probe-872); t01 2 of 3 / 1 of 3 / 0 of 2 across rounds (a template click before the
+  cards rendered, probe-875; three clicks in 200 ms with no wait between, probe-878). None reaches the
+  app. The remaining failures are the author's sequencing and element choice, which no write-time check
+  of the suite's text can judge; what would move it is executing the suite once against the live page
+  before accepting it (a dry replay inside the authoring run), which is the next spec's first item.
+  t03, t05, t08 and the second half of t09: the agent on gpt-6-luna stops before acting or writes from
+  accessible names despite the prompt (probe-852, 863, 866, 873, 876); t08's cancel step cannot exist on
+  rc.6 (F113).
+

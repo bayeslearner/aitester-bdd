@@ -51,6 +51,13 @@ per poll.
 
 ### R5 — resume on retry (review P4); R6 — trimmed system prompt (review P5)
 
+## First item carried from spec 06
+
+- R0: a dry replay inside the authoring run: before `write_robot_suite` accepts a suite, the runtime
+  executes it once against the live page the author is on and returns the first failing step; the
+  author fixes that step or files the app fault it shows. This is the check the rc.6 rounds showed a
+  text-only lint cannot provide (spec 06 log, 2026-10-24).
+
 ## Candidates from the cross-project check (docs/history/review-2026-10-23/05-CROSS_PROJECT_CHECK.md)
 
 - A1: write-ahead checkpoint and resume of an aborted run, as wise-rpa-bdd has (`WiseRpaBDD.py:386-545`); R5 covers only the author thread today.
