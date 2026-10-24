@@ -36,6 +36,7 @@ Its own config uses **neutral, aitester-owned** names:
 | `AITESTER_LLM_BASE_URL` | (unset) | LLM endpoint URL for an OpenAI-compatible gateway. Must be scheme+host (e.g. `https://gateway.example.com/v1`); a bare path like `/v1` is rejected up front. |
 | `AITESTER_LLM_API_KEY` | (unset) | Credential for that gateway. A **blank** value is rejected up front. |
 | `AITESTER_AI_DIAGNOSIS` | `on` | `off` to disable LLM diagnosis |
+| `AITESTER_AUTHOR_TIMEOUT` | `900` | Seconds an authoring run may take, in-process and ACP alike; `0` disables |
 | `AITESTER_RUN_ID` | set per run | One id per run, set at `I start verification` unless the caller set it; suites use `%{AITESTER_RUN_ID}` in names of what they create |
 | `AITESTER_LLM_REASONING_EFFORT` | (unset) | Sent as `reasoning_effort` on OpenAI-compatible providers; some gateways need `none` for newer models to call tools over chat completions |
 | `AITESTER_LLM_USE_RESPONSES_API` | (unset) | `1` lets langchain-openai use the Responses API behind a custom `AITESTER_LLM_BASE_URL`; off by default because Azure-backed gateways reject its stateful items |

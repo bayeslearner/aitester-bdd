@@ -637,6 +637,9 @@ def _author_once(
             except OSError:
                 log.warning("could not append plan to bug report %s", state.path)
         final_message = f"{final_message}\n\n{plan_summary}" if final_message else plan_summary
+    if budget_spent:
+        note = f"author budget of {budget_spent:.0f} s spent (AITESTER_AUTHOR_TIMEOUT); the run stopped without a terminal call"
+        final_message = f"{note}\n\n{final_message}" if final_message else note
 
     return AuthoringResult(
         suite_path=state.path if state.kind == "suite" else None,

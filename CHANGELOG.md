@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-10-23
+
+Spec 06: selectors the author proved, and a clock on the author.
+
+### Changed
+- A step that acts on or reads one element must pin one element. The suite writer reads what each
+  selector matches on the live page and refuses a selector that matches several, naming each match
+  (tag, text, attributes) so the author can pin one. The `# first-match: intended` comment of 0.5.1
+  is gone: it was a gate the author switched off itself.
+- A text check (`has text`, `contains`, `matches`, `does not contain`) reads every element the
+  selector matches; the writer accepts a many-match selector for it only when exactly one match
+  holds the expected text.
+- `AITESTER_AUTHOR_TIMEOUT` (default 900 s) bounds the in-process author too, not only the ACP one.
+
 ## [0.5.1] - 2026-10-23
 
 What the first replays of 0.5.0 suites against Archestra 1.5.0-rc.6 showed.
