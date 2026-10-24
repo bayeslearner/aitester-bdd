@@ -544,3 +544,12 @@ def test_dry_replay_closes_its_browser_session(monkeypatch, tmp_path):
     monkeypatch.setattr(d.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
     ok, _ = d.dry_replay("*** Test Cases ***\nT\n    No Operation\n", before=None, timeout=60)
     assert ok and len(closed) == 1 and closed[0].startswith("aitester-dry-")
+
+
+def test_dry_replay_quotes_the_action_error(tmp_path):
+    from aitester_bdd.authoring import dry_replay as d
+    out = tmp_path / "out" / "run"
+    out.mkdir(parents=True)
+    (out / "walk_log.jsonl").write_text('{"kind":"after_action","rule":"open","action":"click_text","target":"Studio","raised":true}\n')
+    msg = d._first_failure(tmp_path / "out", "T | FAIL |\n  ✗ open / open: action — action raised twice: LookupError: click_text: no visible element contains 'Studio'\n")
+    assert "action click_text on 'Studio' raised: " in msg and "no visible element contains 'Studio'" in msg

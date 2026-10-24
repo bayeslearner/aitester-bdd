@@ -49,7 +49,17 @@ def timeout_s() -> float:
         return 600.0
 
 
-def _first_failure(out_dir: Path) -> str | None:
+def _robot_error(stdout: str) -> str:
+    """The error Robot printed for the failing step (an action's exception text)."""
+    for line in (stdout or "").splitlines():
+        t = line.strip()
+        if "raised" in t or "Error" in t or "✗" in t:
+            if "FAIL" not in t and len(t) > 12:
+                return t[:300]
+    return ""
+
+
+def _first_failure(out_dir: Path, stdout: str = "") -> str | None:
     """The first failing check or action in the walk log, in words the author can act on."""
     log = next(iter(out_dir.rglob("walk_log.jsonl")), None)
     if log is None:
@@ -65,7 +75,8 @@ def _first_failure(out_dir: Path) -> str | None:
                 f"expected {e.get('expected')!r}, observed {str(e.get('observed'))[:200]!r}"
             )
         if e.get("kind") == "after_action" and e.get("raised"):
-            return f"rule {e.get('rule')!r}: action {e.get('action')} on {e.get('target')!r} raised"
+            why = _robot_error(stdout)
+            return f"rule {e.get('rule')!r}: action {e.get('action')} on {e.get('target')!r} raised" + (f": {why}" if why else "")
         if e.get("kind") == "rule_exit" and e.get("passed") is False:
             return f"rule {e.get('rule')!r} failed: {e.get('failure_step_kind')}"
     return None
@@ -104,7 +115,7 @@ def dry_replay(suite_text: str, *, before: str | None = None, timeout: float | N
             return False, f"dry replay did not finish in {timeout:.0f} s (AITESTER_DRY_REPLAY_TIMEOUT); shorten the waits or split the rule"
         if r.returncode == 0:
             return True, "dry replay passed: every rule ran and every check found its element"
-        first = _first_failure(tmp / "out")
+        first = _first_failure(tmp / "out", r.stdout or "")
         if first is None:
             tail = "\n".join((r.stdout or "").splitlines()[-12:])
             first = f"Robot: {tail[-600:]}"
