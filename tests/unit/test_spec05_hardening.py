@@ -464,3 +464,9 @@ def test_browser_tool_records_what_the_agent_saw(monkeypatch):
     mcp_tools.run_browser_commands(["get attr @e5 id"], session="s", observed=obs)
     assert 'id="new-project-name"' in obs.text
     assert suite_problems(GOOD.replace('"#ok"', '"#new-project-name"'), observed=obs.text) == []
+
+
+def test_lint_refuses_snapshot_properties_used_as_attributes():
+    s = GOOD.replace('"#ok"', "\"[role='heading'][level='1']\"")
+    seen = '- heading "Projects" [level=1, ref=e10]'
+    assert any("snapshot property" in p for p in suite_problems(s, observed=seen))

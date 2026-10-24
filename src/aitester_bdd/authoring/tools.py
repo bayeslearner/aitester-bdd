@@ -148,6 +148,8 @@ _SINGLE_ELEMENT = re.compile(
 # names and not attributes, and the author kept inferring aria-labels from them.
 _ATTR_VALUE = re.compile(r"\[\s*([a-zA-Z_:][-\w:.]*)\s*[~|^$*]?=\s*(\"([^\"]*)\"|'([^']*)'|([^\]\s]+))\s*\]")
 _ID_VALUE = re.compile(r"#([-\w]+)")
+# Names a snapshot prints in brackets that are not DOM attributes ("heading "Projects" [level=1, ref=e10]").
+_SNAPSHOT_PROPS = {"level", "ref", "expanded", "pressed", "active", "cursor", "url"}
 _UNCHECKED_ATTRS = {"role", "type", "disabled", "checked", "hidden", "selected", "open", "required", "readonly", "aria-selected", "aria-expanded", "aria-disabled", "aria-checked", "aria-hidden", "data-state"}
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 _SELECTOR_RE = re.compile(r'(?:locator|selector|scope)\s+"([^"]+)"|(?:await|css|locator)=("?)([^\s"]+)\2')
@@ -179,6 +181,9 @@ def _unseen_values(sel: str, observed: str) -> list[str]:
     out = []
     for m in _ATTR_VALUE.finditer(sel):
         attr, value = m.group(1), m.group(3) if m.group(3) is not None else m.group(4) if m.group(4) is not None else m.group(5)
+        if attr.lower() in _SNAPSHOT_PROPS:
+            out.append(f"{attr} (a snapshot property, not a DOM attribute; a heading's level is its tag h1..h6)")
+            continue
         if attr.lower() in _UNCHECKED_ATTRS or not value or "${" in value or "%{" in value:
             continue
         if not re.search(re.escape(attr) + r"\s*=\s*[\"']?" + re.escape(value), observed, re.I):
