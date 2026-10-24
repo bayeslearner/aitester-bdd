@@ -269,9 +269,10 @@ class AgentBrowserBackend:
             "if (!pick) return false; pick.scrollIntoView({block: 'center'}); "
             "pick.dispatchEvent(new MouseEvent('click', {bubbles: true})); return true; }"
         ).replace("%s", json.dumps(text), 1)
-        # Options and menu items render a moment after their container appears;
-        # give the text up to 2 s before failing.
-        deadline = time.monotonic() + 2.0
+        # Options, menu items and a page's cards render after the click that opens them;
+        # give the text up to 10 s before failing (a template list after "Add Agent"
+        # took longer than 2 s on 2026-10-23).
+        deadline = time.monotonic() + 10.0
         while True:
             if self.evaluate_js(script) is True:
                 return

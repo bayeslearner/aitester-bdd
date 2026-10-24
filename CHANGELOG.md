@@ -18,6 +18,9 @@ Spec 06: selectors the author proved, and a clock on the author.
   selector matches; the writer accepts a many-match selector for it only when exactly one match
   holds the expected text.
 - `AITESTER_AUTHOR_TIMEOUT` (default 900 s) bounds the in-process author too, not only the ACP one.
+- Every suite step must be a keyword of the library; Robot would only find out at run time.
+- `role` values and snapshot properties (`level`, `ref`, …) go through the seen-attribute check; a click
+  on several links to one href is one step; `When I click text` waits up to 10 s for its text.
 
 ## [0.5.1] - 2026-10-23
 
