@@ -1,13 +1,13 @@
 ---
 spec_id: 06-selector-grounding
-status: ACTIVE
-closed_as: null
-since: 2026-10-23
+status: CLOSED
+closed_as: FORK-FORWARD
+since: 2026-10-24
 until: null
 epic: authoring
 features: [match-grounded-selectors, author-wall-clock, run-id-in-wrappers]
 supersedes: []
-superseded_by: null
+superseded_by: 07-sandbox-runtime
 depends_on: [05-agent-safety-and-replayable-suites]
 anchors:
   - docs/internals/authoring.md
@@ -97,4 +97,4 @@ the author's exploration and the replay share one id).
   t03, t05, t08 and the second half of t09: the agent on gpt-6-luna stops before acting or writes from
   accessible names despite the prompt (probe-852, 863, 866, 873, 876); t08's cancel step cannot exist on
   rc.6 (F113).
-
+- 2026-10-24: closed FORK-FORWARD to spec 07, whose first item (R0, the dry replay) is what the rounds showed is missing.

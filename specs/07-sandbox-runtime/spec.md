@@ -1,11 +1,11 @@
 ---
 spec_id: 07-sandbox-runtime
-status: DRAFT
+status: ACTIVE
 closed_as: null
-since: 2026-10-23
+since: 2026-10-24
 until: null
 epic: authoring
-features: [sandbox-run, author-interface, secret-off-argv, runtime-batched-counts, resume-on-retry, trimmed-prompt]
+features: [dry-replay, sandbox-run, author-interface, secret-off-argv, runtime-batched-counts, resume-on-retry, trimmed-prompt]
 supersedes: []
 superseded_by: null
 depends_on: [06-selector-grounding]
@@ -51,12 +51,32 @@ per poll.
 
 ### R5 — resume on retry (review P4); R6 — trimmed system prompt (review P5)
 
-## First item carried from spec 06
+## R0 — a dry replay inside the authoring run (first; coordinator's direction, 2026-10-24)
 
-- R0: a dry replay inside the authoring run: before `write_robot_suite` accepts a suite, the runtime
-  executes it once against the live page the author is on and returns the first failing step; the
-  author fixes that step or files the app fault it shows. This is the check the rc.6 rounds showed a
-  text-only lint cannot provide (spec 06 log, 2026-10-24).
+WHEN the author calls `write_robot_suite` and the suite passes the write-time checks, THE writer SHALL
+run the suite once with Robot in a fresh browser session, from the suite's own sign-in block, before
+accepting it. WHEN that run fails, THE writer SHALL refuse the suite and return the first failing step
+(rule, step, expected, observed, or Robot's own error), and the author fixes the step or files the app
+fault it shows. `AITESTER_DRY_REPLAY_RETRIES` (default 3) caps the refusals per authoring run; past the
+cap the writer refuses with "cap reached" and the author ends with `report_bug` naming the step.
+`AITESTER_DRY_REPLAY=0` turns the dry replay off; `AITESTER_DRY_REPLAY_BEFORE` names a command run
+before each dry replay (the Archestra wrapper points it at `lab_cleanup.sh`, since a dry replay creates
+the same project or invitation the exploration did); `AITESTER_DRY_REPLAY_TIMEOUT` (default 600 s)
+bounds one dry replay.
+
+Design: `authoring/dry_replay.py::dry_replay(suite_text, *, timeout_s, before) -> (ok, summary)`
+copies the suite to a temporary directory, runs `python -m robot --outputdir … suite.robot` with
+`AITESTER_RUN_SESSION` set to a fresh name and the process environment otherwise inherited (the
+`env:` references resolve there, never in the agent), then reads `walk_log.jsonl` for the first
+failing check or action; with no walk log it quotes Robot's output. `build_tools` and `build_server`
+take the callable; tests pass a fake.
+
+Tasks:
+- [ ] R0 `dry_replay.py`, wiring in both authors, retry cap, tests
+- [ ] Wrapper: `AITESTER_DRY_REPLAY_BEFORE=lab_cleanup.sh` in `author_ui_test.sh`
+- [ ] Re-author and replay t09, t04, t01 from a clean lab; records named in the log
+- [ ] Tag when green; CHANGELOG
+
 
 ## Candidates from the cross-project check (docs/history/review-2026-10-23/05-CROSS_PROJECT_CHECK.md)
 
@@ -75,3 +95,5 @@ per poll.
 ## Log
 
 - 2026-10-23: drafted as the successor of specs 04 and 05.
+
+- 2026-10-24: activated for R0 on the coordinator's direction; spec 06 closed FORK-FORWARD into it.
