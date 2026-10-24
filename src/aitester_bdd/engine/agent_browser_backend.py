@@ -244,23 +244,27 @@ class AgentBrowserBackend:
         self._run("click", selector)
 
     def click_text(self, text: str) -> None:
-        # Try the CLI's text-selector first; fall back to a JS click
-        # for text wrapped in non-button elements.
-        for sel in (f'text="{text}"', f"text={text}"):
-            try:
-                if self.get_count(sel) > 0:
-                    self._run("click", sel)
-                    return
-            except Exception:
-                pass
+        """Click the element whose text is `text`.
+
+        Exact text first, inside an open dialog before the rest of the page, then a
+        visible element that contains the text. On 2026-10-23 a substring-first
+        click of "Create" hit a sidebar entry "Create run-check.txt with ALPHA"
+        instead of the dialog's Create button.
+        """
         script = (
-            f"() => {{ const t = {json.dumps(text)}; "
-            f"for (const el of document.querySelectorAll("
-            f"'button, a, [role=button], div[tabindex]')) {{ "
-            f"if (el.offsetParent !== null && el.textContent.includes(t)) "
-            f"{{ el.dispatchEvent(new MouseEvent('click', {{bubbles:true}})); "
-            f"return true; }} }} return false; }}"
-        )
+            "() => { const t = %s.trim(); "
+            "const els = Array.from(document.querySelectorAll("
+            "'button, a, [role=button], [role=menuitem], [role=option], [role=tab], div[tabindex]'))"
+            ".filter(el => el.offsetParent !== null); "
+            "const inDialog = el => !!el.closest('[role=dialog], [role=alertdialog]'); "
+            "const txt = el => (el.textContent || '').replace(/\\s+/g, ' ').trim(); "
+            "const pick = els.find(el => inDialog(el) && txt(el) === t) "
+            "|| els.find(el => txt(el) === t) "
+            "|| els.find(el => inDialog(el) && txt(el).includes(t)) "
+            "|| els.find(el => txt(el).includes(t)); "
+            "if (!pick) return false; pick.scrollIntoView({block: 'center'}); "
+            "pick.dispatchEvent(new MouseEvent('click', {bubbles: true})); return true; }"
+        ) % json.dumps(text)
         if self.evaluate_js(script) is not True:
             raise LookupError(f"click_text: no visible element contains {text!r}")
 

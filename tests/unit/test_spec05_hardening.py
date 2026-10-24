@@ -366,3 +366,15 @@ def test_lint_rejects_a_single_element_step_whose_selector_matches_many():
     # an existence check may match many
     s2 = GOOD + '    I define rule "pick"\n        Then selector "[role=combobox]" exists\n'
     assert suite_problems(s2, probe=probe) == []
+
+
+def test_click_text_prefers_exact_text_and_open_dialogs():
+    from aitester_bdd.engine.agent_browser_backend import AgentBrowserBackend
+    b = AgentBrowserBackend.__new__(AgentBrowserBackend)
+    seen = {}
+    b.evaluate_js = lambda script: seen.setdefault("script", script) and True
+    b.click_text("Create")
+    script = seen["script"]
+    # exact match inside a dialog is tried before any substring match
+    assert script.index("inDialog(el) && txt(el) === t") < script.index("txt(el).includes(t)")
+    assert "role=dialog" in script
