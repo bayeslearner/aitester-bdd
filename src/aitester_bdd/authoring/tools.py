@@ -134,6 +134,8 @@ _COUNT_EQ = re.compile(r'count of locator\s+"[^"]*"\s+equals\s+(\d+)', re.I)
 # <button> on a projects page is rarely the one the author clicked during exploration.
 _BARE_TAG = re.compile(r"^(?:[a-z][a-z0-9]*)(?:\s*,\s*[a-z][a-z0-9]*)*$", re.I)
 # An id captured while exploring (a project or chat created in that session) is gone at replay.
+# Three or more chained utility classes (Tailwind) describe styling, not the element.
+_UTILITY_CHAIN = re.compile(r"(\.[a-z0-9:_\-\[\]/]+){3,}", re.I)
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 _SELECTOR_RE = re.compile(r'(?:locator|selector|scope)\s+"([^"]+)"|(?:await|css|locator)=("?)([^\s"]+)\2')
 
@@ -211,6 +213,11 @@ def suite_problems(
                         break
                 if re.search(r"\S\|\S", sel):
                     problems.append(f"line {n}: selector {sel!r}: a fallback needs spaces around the bar ('a | b')")
+            if _UTILITY_CHAIN.search(sel) and "[" not in sel.split(".")[0]:
+                problems.append(
+                    f"line {n}: selector {sel!r} is a chain of styling classes that changes with the theme; "
+                    f"use a data attribute, id, aria-label, href or 'When I click text \"…\"'"
+                )
             if _BARE_TAG.match(sel):
                 problems.append(
                     f"line {n}: selector {sel!r} is only a tag name and matches the first such element on the "

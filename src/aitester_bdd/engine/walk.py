@@ -817,6 +817,12 @@ def _execute_body(
             except Exception:
                 pass
 
+    # The click just made, when the step before a check was one. A single-page app
+    # swallows a click that lands before it has hydrated (the Studio toggle in the
+    # Archestra runs, 2026-10-23), so a check that fails right after a click gets
+    # the click once more and one more look before the rule fails.
+    last_click: Action | None = None
+
     for step in body:
         if deadline is not None and time.time() > deadline:
             return (False, "rule_timeout",
@@ -852,6 +858,19 @@ def _execute_body(
             ok, expected, observed = _eval_state_check(
                 browser, step, timeout_ms=observation_timeout, scope=scope,
             )
+            if not ok and last_click is not None:
+                log.info("check %s failed right after a click; clicking %r once more",
+                         step.kind, last_click.target or last_click.value)
+                try:
+                    _eval_action(browser, last_click, scope=scope)
+                    _await_after_action(browser, last_click)
+                except Exception as exc:
+                    log.info("the second click raised: %s", exc)
+                else:
+                    ok, expected, observed = _eval_state_check(
+                        browser, step, timeout_ms=observation_timeout, scope=scope,
+                    )
+            last_click = None
             if registry is not None:
                 registry.fire_after_state_check(
                     rule, step, ok, expected, observed, position="observation",
@@ -866,6 +885,7 @@ def _execute_body(
 
         if not isinstance(step, Action):
             continue
+        last_click = step if step.kind in ("click", "click_text") else None
 
         # Dismiss interrupts before every action — modals can appear at
         # any moment and block clicks. (Ported from WISE.)

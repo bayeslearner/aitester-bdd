@@ -323,3 +323,36 @@ def test_lint_rejects_body_locators_and_empty_rules():
     assert any("only a tag name" in p for p in suite_problems(s))
     s = GOOD + '    I define rule "cancel"\n        And I declare parents "r"\n        Then selector "html" exists\n'
     assert any("does nothing" in p and "cancel" in p for p in suite_problems(s))
+
+
+def test_lint_rejects_utility_class_chains():
+    s = GOOD.replace('"#ok"', '"button.flex.flex-1.items-center.justify-center.gap-1"')
+    assert any("styling classes" in p for p in suite_problems(s))
+    assert suite_problems(GOOD.replace('"#ok"', '"button.primary"')) == []
+
+
+def test_failed_check_after_a_click_retries_the_click_once(monkeypatch):
+    from aitester_bdd.AITester import Action, Rule, StateCheck, Verification
+    from aitester_bdd.engine import walk
+
+    class B:
+        clicks = 0
+        def click(self, sel, **kw):
+            self.clicks += 1
+        def get_count(self, sel):
+            return 1 if self.clicks >= 2 else 0
+
+    b = B()
+    checks = {"n": 0}
+
+    def fake_check(browser, step, timeout_ms, scope):
+        checks["n"] += 1
+        return (browser.get_count(step.locator) > 0, "present", str(browser.get_count(step.locator)))
+
+    monkeypatch.setattr(walk, "_eval_state_check", fake_check)
+    monkeypatch.setattr(walk, "_eval_action", lambda browser, step, scope: browser.click(step.target))
+    monkeypatch.setattr(walk, "_await_after_action", lambda browser, step: None)
+    monkeypatch.setattr(walk, "_effective_interrupt_selectors", lambda rule, verification: [])
+    body = [Action(kind="click", target="#studio"), StateCheck(kind="selector_exists", locator="a[href='/agents']")]
+    ok, *_ = walk._execute_body(b, Rule(name="r"), Verification(name="v"), body)
+    assert ok and b.clicks == 2 and checks["n"] == 2
