@@ -31,6 +31,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -142,6 +143,12 @@ _SINGLE_ELEMENT = re.compile(
     r"I click locator|into locator|I type|locator \"[^\"]+\" (has text|contains|matches|is visible|is hidden|"
     r"is enabled|is disabled|has attribute|has class)|input \"[^\"]+\" has value|content of locator",
 )
+# [attr=value] and #id pieces of a selector: each value must have been seen in the browser
+# output of this run (a `get attr`, `get html`, `eval`), since a snapshot shows accessible
+# names and not attributes, and the author kept inferring aria-labels from them.
+_ATTR_VALUE = re.compile(r"\[\s*([a-zA-Z_:][-\w:.]*)\s*[~|^$*]?=\s*(\"([^\"]*)\"|'([^']*)'|([^\]\s]+))\s*\]")
+_ID_VALUE = re.compile(r"#([-\w]+)")
+_UNCHECKED_ATTRS = {"role", "type", "disabled", "checked", "hidden", "selected", "open", "required", "readonly", "aria-selected", "aria-expanded", "aria-disabled", "aria-checked", "aria-hidden", "data-state"}
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 _SELECTOR_RE = re.compile(r'(?:locator|selector|scope)\s+"([^"]+)"|(?:await|css|locator)=("?)([^\s"]+)\2')
 
@@ -167,8 +174,25 @@ def _rules(content: str) -> list[tuple[str, list[str]]]:
     return out
 
 
+def _unseen_values(sel: str, observed: str) -> list[str]:
+    """The attribute values in `sel` that never appeared in `observed`."""
+    out = []
+    for m in _ATTR_VALUE.finditer(sel):
+        attr, value = m.group(1), m.group(3) if m.group(3) is not None else m.group(4) if m.group(4) is not None else m.group(5)
+        if attr.lower() in _UNCHECKED_ATTRS or not value or "${" in value or "%{" in value:
+            continue
+        if not re.search(re.escape(attr) + r"\s*=\s*[\"']?" + re.escape(value), observed, re.I):
+            out.append(f"{attr}={value}")
+    for m in _ID_VALUE.finditer(sel):
+        value = m.group(1)
+        if not re.search(r"\bid\s*=\s*[\"']?" + re.escape(value) + r"\b", observed, re.I):
+            out.append(f"id={value}")
+    return out
+
+
 def suite_problems(
     content: str, *, engine: str = "agent-browser", probe: Callable[[list[str]], list[int]] | None = None,
+    observed: str | None = None,
 ) -> list[str]:
     """Why `content` is not a runnable .robot suite; empty when it is.
 
@@ -224,6 +248,14 @@ def suite_problems(
                     f"line {n}: selector {sel!r} is a chain of styling classes that changes with the theme; "
                     f"use a data attribute, id, aria-label, href or 'When I click text \"…\"'"
                 )
+            if observed is not None:
+                unseen = _unseen_values(sel, observed)
+                if unseen:
+                    problems.append(
+                        f"line {n}: selector {sel!r} pins {', '.join(unseen)}, which never appeared in this "
+                        f"run's browser output; a snapshot shows accessible names, not attributes. Read the "
+                        f"element with get attr / get html / eval and pin what it returns, or use 'When I click text \"…\"'"
+                    )
             if _BARE_TAG.match(sel):
                 problems.append(
                     f"line {n}: selector {sel!r} is only a tag name and matches the first such element on the "
@@ -305,6 +337,7 @@ class ReportBugParams(BaseModel):
 def build_tools(
     state: TerminalState, *, suite_path: Path, bug_report_path: Path,
     engine: str = "agent-browser", probe: Callable[[list[str]], list[int]] | None = None,
+    observed: Any = None,
 ) -> list[StructuredTool]:
     """The two author-mode terminal tools, writing to fixed paths. The agent
     drives the page through the `browser` tool (`build_browser_tool`)."""
@@ -312,7 +345,10 @@ def build_tools(
     def write_robot_suite(content: str) -> str:
         if refusal := state._refusal():
             return refusal
-        problems = suite_problems(content, engine=engine, probe=probe)
+        problems = suite_problems(
+            content, engine=engine, probe=probe,
+            observed=observed.text if observed is not None else None,
+        )
         if problems:
             # Not terminal: the agent fixes the suite and calls again.
             return (
@@ -366,16 +402,17 @@ class BrowserParams(BaseModel):
     commands: list[str] | None = Field(default=None, description="Several command lines run in order; stops at the first failure.")
 
 
-def build_browser_tool(*, session: str, base_url: str | None) -> StructuredTool:
+def build_browser_tool(*, session: str, base_url: str | None, observed: Any = None) -> StructuredTool:
     """The one way an in-process author drives the page: an allowlisted
-    agent-browser command in a pinned session, no shell (spec 05 S1)."""
+    agent-browser command in a pinned session, no shell (spec 05 S1).
+    `observed` (mcp_tools.Observed) collects what the agent saw for the suite lint."""
     from aitester_bdd.authoring.mcp_tools import run_browser_commands
 
     def browser(command: str | None = None, commands: list[str] | None = None) -> str:
         cmds = list(commands or []) + ([command] if command else [])
         if not cmds:
             return "ERROR: give command or commands"
-        return run_browser_commands(cmds, session=session, base_url=base_url)
+        return run_browser_commands(cmds, session=session, base_url=base_url, observed=observed)
 
     return StructuredTool.from_function(
         func=browser, name="browser", args_schema=BrowserParams,

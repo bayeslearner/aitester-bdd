@@ -389,3 +389,23 @@ def test_start_verification_sets_a_run_id(monkeypatch):
     monkeypatch.setenv("AITESTER_RUN_ID", "fixed")
     AITester().start_verification("v")
     assert os.environ["AITESTER_RUN_ID"] == "fixed"
+
+
+def test_lint_requires_pinned_attribute_values_to_have_been_seen():
+    s = GOOD.replace('"#ok"', "\"button[aria-label='New project']\"")
+    seen_nothing = "- button \"New project\" [ref=e11]"          # a snapshot: accessible name only
+    assert any("never appeared" in p for p in suite_problems(s, observed=seen_nothing))
+    seen_attr = seen_nothing + "\n<button aria-label=\"New project\" class=x>"
+    assert suite_problems(s, observed=seen_attr) == []
+    # ids too; role/type never checked; Robot variables skipped
+    assert any("id=new-project-name" in p for p in suite_problems(GOOD.replace('"#ok"', '"#new-project-name"'), observed=""))
+    assert suite_problems(GOOD.replace('"#ok"', "\"[role='option'][type=button]\""), observed="") == []
+    assert suite_problems(GOOD.replace('"#ok"', "\"[data-testid='${X}']\""), observed="") == []
+
+
+def test_browser_tool_records_what_the_agent_saw(monkeypatch):
+    from aitester_bdd.authoring import mcp_tools
+    monkeypatch.setattr(mcp_tools, "run_browser_command", lambda c, **kw: f"out of {c}")
+    obs = mcp_tools.Observed()
+    mcp_tools.run_browser_commands(["snapshot -c -i", "get attr @e3 aria-label"], session="s", observed=obs)
+    assert "out of snapshot -c -i" in obs.text and "out of get attr @e3 aria-label" in obs.text

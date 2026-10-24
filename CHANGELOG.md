@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 What the first replays of 0.5.0 suites against Archestra 1.5.0-rc.6 showed.
 
 ### Reliability
+- `write_robot_suite` refuses a pinned attribute value (`[aria-label='…']`, `#id`, `[data-testid=…]`) that
+  never appeared in this run's browser output: a snapshot shows accessible names, not attributes, and
+  five replays failed on attributes inferred from them. The author confirms with `get attr`/`get html`.
 - `write_robot_suite` refuses a locator that is only a tag name (`button`, `h1`): it matches the
   first such element on the page, not the one the author clicked. Three of six replays failed on it.
 - `write_robot_suite` refuses a UUID in the suite unless the line carries `# fixed-id: intended`:

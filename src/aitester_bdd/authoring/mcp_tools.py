@@ -185,16 +185,42 @@ def run_browser_command(
     return text[:_MAX_OUTPUT]
 
 
+class Observed:
+    """Everything the browser tool returned to the agent in this run: the text a pinned
+    attribute value has to appear in (`suite_problems(observed=…)`). Bounded."""
+
+    def __init__(self, limit: int = 4_000_000) -> None:
+        self._parts: list[str] = []
+        self._size = 0
+        self._limit = limit
+
+    def add(self, text: str) -> None:
+        self._parts.append(text)
+        self._size += len(text)
+        while self._size > self._limit and len(self._parts) > 1:
+            self._size -= len(self._parts.pop(0))
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self._parts)
+
+
 def run_browser_commands(
     commands: list[str], *, session: str, timeout_s: int = 60, base_url: str | None = None,
+    observed: Observed | None = None,
 ) -> str:
     """Run several commands in order; stop at the first that fails (P1).
     Returns one block per command, or the single command's output as is."""
     if len(commands) == 1:
-        return run_browser_command(commands[0], session=session, timeout_s=timeout_s, base_url=base_url)
+        out = run_browser_command(commands[0], session=session, timeout_s=timeout_s, base_url=base_url)
+        if observed is not None:
+            observed.add(out)
+        return out
     parts = []
     for i, c in enumerate(commands, 1):
         out = run_browser_command(c, session=session, timeout_s=timeout_s, base_url=base_url)
+        if observed is not None:
+            observed.add(out)
         parts.append(f"[{i}] {c}\n{out}")
         if out.startswith("ERROR") or out.startswith("exit "):
             parts.append(f"(stopped: command {i} failed; {len(commands) - i} not run)")
@@ -238,6 +264,8 @@ def build_server(
     def probe(selectors: list[str]) -> list[int]:
         return get_counts(selectors, session=session)
 
+    observed = Observed()
+
     @server.tool(description=(
         "Run agent-browser commands in the test's browser session and return their output. "
         "Pass one command, or a list run in order that stops at the first failure, e.g. "
@@ -248,7 +276,7 @@ def build_server(
         cmds = list(commands or []) + ([command] if command else [])
         if not cmds:
             return "ERROR: give command or commands"
-        return run_browser_commands(cmds, session=session, base_url=base_url)
+        return run_browser_commands(cmds, session=session, base_url=base_url, observed=observed)
 
     @server.tool(description=(
         "TERMINAL. Write the complete .robot suite. It is parsed and its selectors are "
@@ -256,9 +284,13 @@ def build_server(
         "back so you can fix it. On success, stop: the task is done."
     ))
     def write_robot_suite(content: str) -> str:
-        problems = suite_problems(content, engine=engine, probe=probe)
+        problems = suite_problems(content, engine=engine, probe=probe, observed=observed.text)
         if problems:
-            return "ERROR: not a runnable suite: " + "; ".join(problems[:8])
+            return (
+                "ERROR: not a runnable suite: " + "; ".join(problems[:8])
+                + ". Fix these lines and call write_robot_suite again; a refused write is not a "
+                "reason to file a bug report."
+            )
         if state_file.exists():
             return "REFUSED: this run already ended. Stop now."
         suite_path.parent.mkdir(parents=True, exist_ok=True)

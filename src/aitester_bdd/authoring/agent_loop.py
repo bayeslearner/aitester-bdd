@@ -542,9 +542,11 @@ def _author_once(
 
     browser_session = session_id()
     state = TerminalState()
+    from aitester_bdd.authoring.mcp_tools import Observed
+    observed = Observed()
     tools = build_tools(
         state, suite_path=suite_path, bug_report_path=bug_report_path, engine=engine,
-        probe=lambda sels: get_counts(sels, session=browser_session),
+        probe=lambda sels: get_counts(sels, session=browser_session), observed=observed,
     )
     system_prompt = build_system_prompt(mode, pinning=pinning)
 
@@ -556,7 +558,7 @@ def _author_once(
         from aitester_bdd.authoring.playwright_tools import build_playwright_browser_tools
         tools = tools + build_playwright_browser_tools()
     else:
-        tools = tools + [build_browser_tool(session=browser_session, base_url=base_url)]
+        tools = tools + [build_browser_tool(session=browser_session, base_url=base_url, observed=observed)]
 
     agent = create_deep_agent(
         model=llm,
