@@ -72,10 +72,10 @@ failing check or action; with no walk log it quotes Robot's output. `build_tools
 take the callable; tests pass a fake.
 
 Tasks:
-- [ ] R0 `dry_replay.py`, wiring in both authors, retry cap, tests
-- [ ] Wrapper: `AITESTER_DRY_REPLAY_BEFORE=lab_cleanup.sh` in `author_ui_test.sh`
-- [ ] Re-author and replay t09, t04, t01 from a clean lab; records named in the log
-- [ ] Tag when green; CHANGELOG
+- [x] R0 `dry_replay.py`, wiring in both authors, retry cap, tests (3d260a0, 3464ceb, 4561b6e, d62b99f, 95cb31b, 0e25bf8, f5427ea)
+- [x] Wrapper: `AITESTER_DRY_REPLAY_BEFORE` (absolute path), `AITESTER_DRY_REPLAY_KEEP=<story>/dry`; lab scripts reuse one cookie jar per hour
+- [x] Re-author and replay t09, t04, t01 from a clean lab: records 879–895 (log)
+- [x] v0.5.3 tagged; CHANGELOG
 
 
 ## Candidates from the cross-project check (docs/history/review-2026-10-23/05-CROSS_PROJECT_CHECK.md)
@@ -97,3 +97,14 @@ Tasks:
 - 2026-10-23: drafted as the successor of specs 04 and 05.
 
 - 2026-10-24: activated for R0 on the coordinator's direction; spec 06 closed FORK-FORWARD into it.
+- 2026-10-24 01:50: R0 live. Its first three rounds (879–891) failed before the suite ran: a relative
+  path in the wrapper's before-command, then the suite running signed out (the CLI injected the
+  fixture's sign-in block only after acceptance; the kept run's screenshot was the sign-in page). With
+  both fixed, round 892–895: t01 was sent back twice by the dry replay (a missing wait for `#agentName`,
+  a Radix id that changes between loads) and its third suite replayed whole in a fresh browser
+  (probe-895: 1 test, 1 passed), the first rc.6 story at replayed-suite grade. t09: the dry replay caught
+  `click text "analyst"` made before the selector was opened, twice; the author repeated the step and
+  ended with a report (892). t04: the author did not reach a dry replay; it declines to read attributes
+  with `get html` and files a report (893). Also found on the way: every authoring run had left its
+  Chrome open (a thousand processes; sessions are now closed on every outcome).
+
