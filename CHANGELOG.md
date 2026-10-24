@@ -24,6 +24,8 @@ What the first replays of 0.5.0 suites against Archestra 1.5.0-rc.6 showed.
   chain of three or more utility classes.
 - A check that fails right after a click gets the click once more and one more look before the
   rule fails: a single-page app swallows a click that lands before it has hydrated.
+- `I type X into` sets the field to X: the agent-browser backend uses the CLI's `fill` (clears first), not
+  `type` (appends); a pre-filled name field had read "Codexui-codex".
 - Visibility no longer uses `offsetParent`, which is null for a `position: fixed` element: a listbox
   option in a popover read as invisible and `When I click text "analyst"` found nothing.
 - `When I click text` picks the exact text inside an open dialog first, then exact text anywhere,

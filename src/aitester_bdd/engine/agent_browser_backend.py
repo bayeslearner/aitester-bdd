@@ -296,8 +296,10 @@ class AgentBrowserBackend:
         self._js_action(script, "double_click", selector)
 
     def type(self, selector: str, value: str, *, secret: bool = False) -> None:
-        # agent-browser `type` overwrites by default.
-        self._run("type", selector, value, secrets=(value,) if secret else ())
+        # The suite's "I type X into" means set the field to X. The CLI's `type` appends
+        # ("does not clear existing content first", its --help); `fill` clears first. A
+        # name field the Codex template pre-filled read "Codexui-codex" on 2026-10-23.
+        self._run("fill", selector, value, secrets=(value,) if secret else ())
 
     def select(self, selector: str, value: str) -> None:
         script = (
