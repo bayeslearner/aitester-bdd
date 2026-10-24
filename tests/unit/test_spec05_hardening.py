@@ -470,3 +470,10 @@ def test_lint_refuses_snapshot_properties_used_as_attributes():
     s = GOOD.replace('"#ok"', "\"[role='heading'][level='1']\"")
     seen = '- heading "Projects" [level=1, ref=e10]'
     assert any("snapshot property" in p for p in suite_problems(s, observed=seen))
+
+
+def test_lint_rejects_steps_that_are_not_library_keywords():
+    s = GOOD + '    I define rule "r2"\n        Then locator "[data-testid=x]" has value ""\n'
+    assert any("not a keyword of the aitester library" in p for p in suite_problems(s))
+    ok = GOOD + '    I define rule "r2"\n        Then input "[data-testid=x]" has value "abc"\n        When I click text "Save"\n        And I set rule timeout 240000 ms\n'
+    assert suite_problems(ok) == []

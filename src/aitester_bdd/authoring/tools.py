@@ -164,6 +164,47 @@ def _selectors_in(line: str) -> list[str]:
     return out
 
 
+_KEYWORD_PATTERNS: list[re.Pattern[str]] | None = None
+
+
+def _keyword_patterns() -> list[re.Pattern[str]]:
+    """One regex per `@keyword` of the AITester library: the step forms a suite may use.
+    `${arg}` matches a quoted or unquoted argument; the Given/When/Then/And/But prefix is
+    interchangeable in Robot, so each pattern accepts any of them."""
+    global _KEYWORD_PATTERNS
+    if _KEYWORD_PATTERNS is not None:
+        return _KEYWORD_PATTERNS
+    src = (Path(__file__).resolve().parent.parent / "AITester.py").read_text(encoding="utf-8")
+    pats: list[re.Pattern[str]] = []
+    for name in re.findall(r'@keyword\("((?:[^"\\]|\\.)*)"\)', src):
+        name = name.replace('\\"', '"')
+        body = re.sub(r"^(Given|When|Then|And|But)\s+", "", name)
+        rx = re.escape(body)
+        rx = re.sub(r"\\\$\\\{[^}]+\\\}", r".+?", rx)
+        pats.append(re.compile(r"^(?:Given|When|Then|And|But)?\s*" + rx + r"\s*(?:#.*)?$"))
+    _KEYWORD_PATTERNS = pats
+    return pats
+
+
+def _unknown_steps(content: str) -> list[tuple[int, str]]:
+    """(line, step) for every rule step that matches no library keyword."""
+    out = []
+    in_tests = False
+    pats = _keyword_patterns()
+    for n, line in enumerate(content.splitlines(), 1):
+        st = line.strip()
+        if st.startswith("*** "):
+            in_tests = st.startswith("*** Test Cases")
+            continue
+        if not in_tests or not line.startswith("        ") or not st or st.startswith("#") or st.startswith("..."):
+            continue
+        if st.startswith("[") or st.startswith("I define rule"):
+            continue
+        if not any(p.match(st) for p in pats):
+            out.append((n, st))
+    return out
+
+
 def _rules(content: str) -> list[tuple[str, list[str]]]:
     """(rule name, its body lines) for every `I define rule` block in the suite."""
     out: list[tuple[str, list[str]]] = []
@@ -298,6 +339,11 @@ def suite_problems(
                 f"line {n}: a shell action runs a command on the test machine at replay time; "
                 f"only when the story asks for shell checks, and then add a '# allow-shell' comment to the suite"
             )
+    for n, st in _unknown_steps(content):
+        problems.append(
+            f"line {n}: {st[:90]!r} is not a keyword of the aitester library (Robot finds out at run time); "
+            f"check the grammar: e.g. 'Then input \"<css>\" has value \"…\"', 'Then locator \"<css>\" contains \"…\"'"
+        )
     for name, body in _rules(content):
         meaningful = [ln for ln in body if not re.search(r'declare parents|selector "(body|html)" exists', ln)]
         if not meaningful:
