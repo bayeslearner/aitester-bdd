@@ -538,6 +538,7 @@ def _author_once(
     from deepagents import create_deep_agent
     from langgraph.checkpoint.memory import InMemorySaver
 
+    from aitester_bdd.authoring import dry_replay as _dry_replay
     from aitester_bdd.authoring.mcp_tools import BROWSER_HELP, get_counts, get_matches
     from aitester_bdd.authoring.tools import (
         TerminalState,
@@ -562,6 +563,8 @@ def _author_once(
         state, suite_path=suite_path, bug_report_path=bug_report_path, engine=engine,
         probe=lambda sels: get_counts(sels, session=browser_session), observed=observed,
         matches=lambda sels: get_matches(sels, session=browser_session),
+        dry_replay=(_dry_replay.dry_replay if _dry_replay.enabled() else None),
+        dry_replay_retries=_dry_replay.retries(),
     )
     system_prompt = build_system_prompt(mode, pinning=pinning)
 

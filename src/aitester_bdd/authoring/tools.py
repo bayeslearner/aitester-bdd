@@ -453,9 +453,12 @@ def build_tools(
     state: TerminalState, *, suite_path: Path, bug_report_path: Path,
     engine: str = "agent-browser", probe: Callable[[list[str]], list[int]] | None = None,
     observed: Any = None, matches: Callable[[list[str]], list[dict]] | None = None,
+    dry_replay: Callable[[str], tuple[bool, str]] | None = None, dry_replay_retries: int = 3,
 ) -> list[StructuredTool]:
     """The two author-mode terminal tools, writing to fixed paths. The agent
-    drives the page through the `browser` tool (`build_browser_tool`)."""
+    drives the page through the `browser` tool (`build_browser_tool`).
+    `dry_replay(content)` runs the suite once before it is accepted (spec 07 R0)."""
+    dry_failures = {"n": 0}
 
     def write_robot_suite(content: str) -> str:
         if refusal := state._refusal():
@@ -471,6 +474,21 @@ def build_tools(
                 + ". Fix these lines and call write_robot_suite again; a refused write is not a "
                 "reason to file a bug report."
             )
+        if dry_replay is not None:
+            if dry_failures["n"] >= dry_replay_retries:
+                return (
+                    f"REFUSED: the dry replay failed {dry_failures['n']} times, the cap for this run. "
+                    "End with report_bug, naming the step the last dry replay failed on and what the page showed."
+                )
+            ok, summary = dry_replay(content)
+            if not ok:
+                dry_failures["n"] += 1
+                left = dry_replay_retries - dry_failures["n"]
+                return (
+                    f"ERROR: {summary}. The suite is not accepted. Fix that step (a wait or existence check "
+                    f"before the next click, the element you used, the text you saw) and call write_robot_suite "
+                    f"again; {left} dry replay{'s' if left != 1 else ''} left."
+                )
         suite_path.parent.mkdir(parents=True, exist_ok=True)
         suite_path.write_text(content, encoding="utf-8")
         state.kind, state.path = "suite", suite_path

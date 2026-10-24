@@ -488,3 +488,41 @@ def test_lint_allows_a_click_on_several_links_to_the_same_place():
     assert suite_problems(s, matches=_matches_for({"a[href='/agents']": two})) == []
     two["items"][1]["attrs"]["href"] = "/agents/new"
     assert any("matches 2 elements" in p for p in suite_problems(s, matches=_matches_for({"a[href='/agents']": two})))
+
+
+def test_write_runs_a_dry_replay_and_caps_the_retries(tmp_path):
+    from aitester_bdd.authoring.tools import TerminalState, build_tools
+    calls = {"n": 0}
+
+    def fake_dry(content):
+        calls["n"] += 1
+        return (False, "dry replay failed at rule 'r': check selector_exists on '#x' failed; expected 'present', observed 'absent'")
+
+    state = TerminalState()
+    tools = {t.name: t for t in build_tools(state, suite_path=tmp_path / "s.robot", bug_report_path=tmp_path / "b.md", dry_replay=fake_dry, dry_replay_retries=2)}
+    write = tools["write_robot_suite"]
+    out1 = write.invoke({"content": GOOD})
+    assert out1.startswith("ERROR: dry replay failed at rule 'r'") and "1 dry replay left" in out1
+    out2 = write.invoke({"content": GOOD})
+    assert "0 dry replays left" in out2
+    out3 = write.invoke({"content": GOOD})
+    assert out3.startswith("REFUSED") and "report_bug" in out3 and calls["n"] == 2
+    assert not (tmp_path / "s.robot").exists() and state.kind is None
+
+
+def test_write_accepts_the_suite_when_the_dry_replay_passes(tmp_path):
+    from aitester_bdd.authoring.tools import TerminalState, build_tools
+    state = TerminalState()
+    tools = {t.name: t for t in build_tools(state, suite_path=tmp_path / "s.robot", bug_report_path=tmp_path / "b.md", dry_replay=lambda c: (True, "dry replay passed"))}
+    out = tools["write_robot_suite"].invoke({"content": GOOD})
+    assert out.startswith("OK") and (tmp_path / "s.robot").exists()
+
+
+def test_dry_replay_reports_the_first_failing_step(tmp_path):
+    from aitester_bdd.authoring import dry_replay as d
+    out = tmp_path / "out" / "run"
+    out.mkdir(parents=True)
+    (out / "walk_log.jsonl").write_text(
+        '{"kind":"state_check","rule":"open","check":"selector_exists","locator":"#a","ok":true}\n'
+        '{"kind":"state_check","rule":"pick","check":"contains","locator":"h1","ok":false,"expected":"contains x","observed":"Today"}\n')
+    assert "rule 'pick': check contains on 'h1' failed" in d._first_failure(tmp_path / "out")

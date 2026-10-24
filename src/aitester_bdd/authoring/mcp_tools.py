@@ -313,6 +313,9 @@ def build_server(
         return get_matches(selectors, session=session)
 
     observed = Observed()
+    from aitester_bdd.authoring import dry_replay as _dry
+
+    dry_failures = {"n": 0}
 
     @server.tool(description=(
         "Run agent-browser commands in the test's browser session and return their output. "
@@ -339,6 +342,20 @@ def build_server(
                 + ". Fix these lines and call write_robot_suite again; a refused write is not a "
                 "reason to file a bug report."
             )
+        if _dry.enabled():
+            if dry_failures["n"] >= _dry.retries():
+                return (
+                    f"REFUSED: the dry replay failed {dry_failures['n']} times, the cap for this run. "
+                    "End with report_bug, naming the step the last dry replay failed on and what the page showed."
+                )
+            ok, summary = _dry.dry_replay(content)
+            if not ok:
+                dry_failures["n"] += 1
+                left = _dry.retries() - dry_failures["n"]
+                return (
+                    f"ERROR: {summary}. The suite is not accepted. Fix that step and call write_robot_suite "
+                    f"again; {left} dry replay{'s' if left != 1 else ''} left."
+                )
         if state_file.exists():
             return "REFUSED: this run already ended. Stop now."
         suite_path.parent.mkdir(parents=True, exist_ok=True)
