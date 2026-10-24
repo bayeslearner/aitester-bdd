@@ -16,7 +16,13 @@ What the first replays of 0.5.0 suites against Archestra 1.5.0-rc.6 showed.
   an id captured while exploring (a project the suite itself creates) is gone at replay.
 - The `browser` tool refuses a `wait <ms>` longer than the call timeout: the CLI kept waiting after
   the call timed out and blocked the session's next commands (three 60 s timeouts in a row).
-- The author prompt says all three.
+- `write_robot_suite` refuses `body`/`html` as a locator (a `contains` on it is true wherever the
+  words appear), a rule that does nothing beyond checking the page exists, and a selector that is a
+  chain of three or more utility classes.
+- A check that fails right after a click gets the click once more and one more look before the
+  rule fails: a single-page app swallows a click that lands before it has hydrated.
+- The author prompt says all of this, plus: a tool-call card's arguments are not its result, and
+  every verify/record/clean-up sentence of the story becomes a line of the suite.
 
 ### Fixed
 - gpt-6 models with tools behind a custom `AITESTER_LLM_BASE_URL`: langchain-openai switched them
