@@ -386,6 +386,12 @@ def suite_problems(
                     + f": {_describe(items)}. Pin the one element that carries the text, with one of its attributes or a scope"
                 )
                 continue
+            hrefs = {(it.get("attrs") or {}).get("href") for it in items}
+            if (
+                "I click locator" in line and c <= len(items)
+                and all(it.get("tag") == "a" for it in items) and len(hrefs) == 1 and None not in hrefs
+            ):
+                continue  # several links to the same place: clicking any of them is the same step
             problems.append(
                 f"line {n}: selector {sel!r} matches {c} elements on the page right now and this step acts on "
                 f"one: {_describe(items)}. Pin the one you used (an attribute of it, a scope, or 'When I click text \"…\"')"

@@ -478,3 +478,13 @@ def test_lint_rejects_steps_that_are_not_library_keywords():
     assert any("not a keyword of the aitester library" in p for p in suite_problems(s))
     ok = GOOD + '    I define rule "r2"\n        Then input "[data-testid=x]" has value "abc"\n        When I click text "Save"\n        And I set rule timeout 240000 ms\n'
     assert suite_problems(ok) == []
+
+
+def test_lint_allows_a_click_on_several_links_to_the_same_place():
+    two = {"count": 2, "items": [
+        {"tag": "a", "text": "Agents", "attrs": {"href": "/agents", "data-slot": "sidebar-menu-button"}},
+        {"tag": "a", "text": "Agents", "attrs": {"href": "/agents"}}]}
+    s = GOOD + '    I define rule "nav"\n        When I click locator "a[href=\'/agents\']"\n'
+    assert suite_problems(s, matches=_matches_for({"a[href='/agents']": two})) == []
+    two["items"][1]["attrs"]["href"] = "/agents/new"
+    assert any("matches 2 elements" in p for p in suite_problems(s, matches=_matches_for({"a[href='/agents']": two})))
