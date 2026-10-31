@@ -78,6 +78,19 @@ Tasks:
 - [x] v0.5.3 tagged; CHANGELOG
 
 
+
+### R0 follow-ups from the Sonnet rounds (2026-10-31, records 1330–1335)
+
+- R0a: a `describe @eN` browser command that prints an element's tag, id, data-testid, aria-label, name,
+  placeholder, href, role and text, so the author reads attributes in one call before pinning (the
+  Sonnet author pinned a tool card by its visible words, which live only in `aria-label`, and was refused).
+- R0b: an explicit wait on text: `And I wait until locator "<css>" contains "<text>"` (bounded by the rule
+  timeout), so a click after a model reply has something to wait on besides `Sleep`; two of three t05 dry
+  replays clicked before the reply had rendered.
+- R0c: a collapsed tool card's arguments and result appear only after a click and carry no attribute;
+  the author needs a documented pattern (click the card by its words, then check a `[role=region]`
+  inside it) or Archestra needs attributes on the card.
+
 ## Candidates from the cross-project check (docs/history/review-2026-10-23/05-CROSS_PROJECT_CHECK.md)
 
 - A1: write-ahead checkpoint and resume of an aborted run, as wise-rpa-bdd has (`WiseRpaBDD.py:386-545`); R5 covers only the author thread today.
